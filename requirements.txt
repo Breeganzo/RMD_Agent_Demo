@@ -13,9 +13,13 @@ requests>=2.31.0
 # Environment Variables
 python-dotenv>=1.0.0
 
-# LangChain (for agentic AI orchestration)
-langchain>=0.1.0
-langchain-core>=0.1.0
+# LangChain - Agentic AI Framework (PROPERLY USED!)
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-groq>=0.1.0
+
+# Groq - FREE LLM API Provider
+groq>=0.4.0
 
 # JSON handling (for robust parsing)
 jsonschema>=4.19.0

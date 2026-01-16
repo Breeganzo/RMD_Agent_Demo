@@ -29,6 +29,7 @@ load_dotenv()
 # Import our modules
 from src.data_models import PatientScreening, Symptom, RMDAssessment
 from src.rmd_agent import RMDScreeningAgent, demo_assessment
+from src.fhir_resources import create_screening_bundle, FHIRBundle
 
 # Page configuration
 st.set_page_config(
@@ -112,10 +113,11 @@ def create_sidebar():
         **About this Demo**
         
         This prototype demonstrates:
-        - 🤖 Agentic AI with LLM reasoning
-        - 📊 FHIR-inspired data models
-        - 🔍 Explainable AI outputs
-        - 🏥 Clinical decision support concepts
+        - 🤖 **LangChain ReAct Agent** - LLM decides which tools to use
+        - 📊 **FHIR R4 Resources** - Proper healthcare data standards
+        - 🔍 **Explainable AI** - See the agent's reasoning
+        - 🏥 **Clinical Decision Support** - Evidence-based assessments
+        - 🆓 **Free LLM API** - Uses Groq's free tier
         
         Built for the AI Software Engineer role interview at University of Reading.
         """)
@@ -130,10 +132,11 @@ def create_sidebar():
         api_configured = agent.is_configured()
         
         if api_configured:
-            st.success("✅ API Key Configured")
+            st.success("✅ Groq API Key Configured")
             demo_mode = st.checkbox("Use Demo Mode (no API calls)", value=False)
         else:
-            st.warning("⚠️ No API Key Found")
+            st.warning("⚠️ No Groq API Key Found")
+            st.info("Get a FREE key at console.groq.com")
             st.info("Using Demo Mode (rule-based only)")
             demo_mode = True
         
@@ -152,10 +155,12 @@ def create_sidebar():
         
         st.markdown("""
         **Technology Stack**
-        - Python 3.10+
-        - Streamlit
-        - Pydantic
-        - xAI Grok API
+        - 🐍 Python 3.10+
+        - 🎨 Streamlit
+        - 🔗 LangChain (Agent Framework)
+        - 🚀 Groq API (FREE LLM)
+        - 🏥 FHIR R4 (Healthcare Standard)
+        - ✅ Pydantic (Data Validation)
         
         [View on GitHub](#) | [Documentation](#)
         """)
@@ -524,6 +529,51 @@ def display_assessment(assessment: RMDAssessment):
     show_disclaimer()
 
 
+def display_fhir_bundle(bundle: FHIRBundle):
+    """Display FHIR Bundle in an interactive format."""
+    st.markdown("---")
+    st.markdown("## 🏥 FHIR R4 Resources")
+    st.markdown("""
+    This data follows the **HL7 FHIR R4** standard used by the NHS for healthcare interoperability.
+    """)
+    
+    fhir_json = bundle.to_fhir_json()
+    
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Bundle Type", fhir_json.get("type", "collection").title())
+    with col2:
+        st.metric("Resources", len(fhir_json.get("entry", [])))
+    with col3:
+        st.metric("Standard", "FHIR R4")
+    
+    # Show resources
+    st.markdown("### 📦 Bundle Contents")
+    
+    for i, entry in enumerate(fhir_json.get("entry", [])):
+        resource = entry.get("resource", {})
+        resource_type = resource.get("resourceType", "Unknown")
+        resource_id = resource.get("id", "")[:8]
+        
+        icon = {
+            "Patient": "👤",
+            "Observation": "🔬",
+            "RiskAssessment": "⚠️"
+        }.get(resource_type, "📄")
+        
+        with st.expander(f"{icon} {resource_type} ({resource_id}...)", expanded=(resource_type == "RiskAssessment")):
+            st.json(resource)
+    
+    # Download button
+    st.download_button(
+        label="📥 Download FHIR Bundle (JSON)",
+        data=json.dumps(fhir_json, indent=2, default=str),
+        file_name="rmd_screening_fhir_bundle.json",
+        mime="application/fhir+json"
+    )
+
+
 def main():
     """Main application entry point."""
     
@@ -532,6 +582,8 @@ def main():
     st.markdown("""
     An AI-powered clinical decision support prototype for early detection of 
     **Rheumatic and Musculoskeletal Diseases (RMDs)**.
+    
+    ✨ **Features:** LangChain ReAct Agent | FHIR R4 Compliance | Free Groq LLM API
     """)
     
     # Show disclaimer
@@ -545,18 +597,46 @@ def main():
     
     if patient is not None:
         # Show spinner while processing
-        with st.spinner("🔍 Analyzing patient data..."):
+        with st.spinner("🔍 Agent analyzing patient data..."):
             # Check mode
             demo_mode = st.session_state.get('demo_mode', True)
             
             if demo_mode:
                 assessment = demo_assessment(patient)
+                agent = None
             else:
                 agent = RMDScreeningAgent()
                 assessment = agent.assess(patient)
         
         # Display results
         display_assessment(assessment)
+        
+        # Generate and display FHIR Bundle
+        st.markdown("---")
+        
+        # Create FHIR bundle
+        symptoms_data = [
+            {"name": s.name, "present": s.present, "severity": s.severity, "duration_days": s.duration_days}
+            for s in patient.symptoms
+        ]
+        assessment_data = {
+            "risk_level": assessment.risk_level,
+            "likely_conditions": assessment.likely_conditions,
+            "reasoning": assessment.reasoning,
+            "recommended_next_step": assessment.recommended_next_step,
+            "confidence_score": assessment.confidence_score,
+            "red_flags_identified": assessment.red_flags_identified,
+        }
+        fhir_bundle = create_screening_bundle(
+            patient_id=patient.patient_id,
+            age=patient.age,
+            sex=patient.sex,
+            symptoms=symptoms_data,
+            assessment=assessment_data
+        )
+        
+        # Display FHIR resources
+        display_fhir_bundle(fhir_bundle)
         
         # Show raw data in expander
         with st.expander("📄 View Raw Data (JSON)"):

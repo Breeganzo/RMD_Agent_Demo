@@ -220,6 +220,11 @@ def calculate_basic_risk_score(patient: PatientScreening) -> tuple[str, float]:
     Calculate a basic rule-based risk score as a fallback.
     
     This provides a simple heuristic assessment if the LLM fails.
+    Confidence is calculated based on:
+    - Number of symptoms reported (more data = higher confidence)
+    - Severity information availability
+    - Duration information availability
+    - Medical history provided
     
     Args:
         patient: PatientScreening object
@@ -227,46 +232,126 @@ def calculate_basic_risk_score(patient: PatientScreening) -> tuple[str, float]:
     Returns:
         Tuple of (risk_level, confidence_score)
     """
-    score = 0
+    risk_score = 0
+    confidence_factors = 0
+    max_confidence_factors = 0
     
     # Joint pain is baseline
-    if patient.has_symptom("joint_pain"):
-        score += 1
+    joint_pain = patient.get_symptom("joint_pain")
+    if joint_pain:
+        max_confidence_factors += 2  # presence + severity
+        if joint_pain.present:
+            risk_score += 1
+            confidence_factors += 1
+            if joint_pain.severity is not None:
+                confidence_factors += 1
+                # Higher severity increases risk
+                if joint_pain.severity >= 7:
+                    risk_score += 1
     
     # Multiple joints is concerning
-    if patient.has_symptom("multiple_joints_affected"):
-        score += 2
+    multiple_joints = patient.get_symptom("multiple_joints_affected")
+    if multiple_joints:
+        max_confidence_factors += 1
+        if multiple_joints.present:
+            risk_score += 2
+            confidence_factors += 1
     
     # Morning stiffness
     morning_stiffness = patient.get_symptom("morning_stiffness")
-    if morning_stiffness and morning_stiffness.present:
-        score += 2
-        if morning_stiffness.duration_days and morning_stiffness.duration_days > 30:
-            score += 2
+    if morning_stiffness:
+        max_confidence_factors += 2  # presence + duration
+        if morning_stiffness.present:
+            risk_score += 2
+            confidence_factors += 1
+            if morning_stiffness.duration_days is not None:
+                confidence_factors += 1
+                if morning_stiffness.duration_days > 30:
+                    risk_score += 2
+                elif morning_stiffness.duration_days > 60:
+                    risk_score += 3
     
     # Inflammatory signs
-    if patient.has_symptom("joint_swelling"):
-        score += 2
-    if patient.has_symptom("joint_redness"):
-        score += 1
+    swelling = patient.get_symptom("joint_swelling")
+    if swelling:
+        max_confidence_factors += 1
+        if swelling.present:
+            risk_score += 2
+            confidence_factors += 1
+    
+    redness = patient.get_symptom("joint_redness")
+    if redness:
+        max_confidence_factors += 1
+        if redness.present:
+            risk_score += 1
+            confidence_factors += 1
     
     # Systemic symptoms
-    if patient.has_symptom("fever"):
-        score += 2
-    if patient.has_symptom("weight_loss"):
-        score += 1
-    if patient.has_symptom("fatigue"):
-        score += 1
-    if patient.has_symptom("skin_rash"):
-        score += 2
+    fever = patient.get_symptom("fever")
+    if fever:
+        max_confidence_factors += 1
+        if fever.present:
+            risk_score += 2
+            confidence_factors += 1
+    
+    weight_loss = patient.get_symptom("weight_loss")
+    if weight_loss:
+        max_confidence_factors += 1
+        if weight_loss.present:
+            risk_score += 1
+            confidence_factors += 1
+    
+    fatigue = patient.get_symptom("fatigue")
+    if fatigue:
+        max_confidence_factors += 2  # presence + severity
+        if fatigue.present:
+            risk_score += 1
+            confidence_factors += 1
+            if fatigue.severity is not None:
+                confidence_factors += 1
+                if fatigue.severity >= 7:
+                    risk_score += 1
+    
+    skin_rash = patient.get_symptom("skin_rash")
+    if skin_rash:
+        max_confidence_factors += 1
+        if skin_rash.present:
+            risk_score += 2
+            confidence_factors += 1
+    
+    # Medical history adds to confidence
+    max_confidence_factors += 1
+    if patient.medical_history and len(patient.medical_history.strip()) > 10:
+        confidence_factors += 1
+    
+    # Calculate confidence score based on data completeness
+    # Base confidence starts at 0.4, can go up to 0.95 based on data quality
+    if max_confidence_factors > 0:
+        data_completeness = confidence_factors / max_confidence_factors
+        # Scale from 0.4 to 0.95 based on completeness
+        confidence = 0.40 + (data_completeness * 0.55)
+    else:
+        confidence = 0.40
+    
+    # Adjust confidence based on symptom count (more symptoms = clearer picture)
+    symptom_count = sum(1 for s in patient.symptoms if s.present)
+    if symptom_count >= 5:
+        confidence = min(0.95, confidence + 0.10)
+    elif symptom_count >= 3:
+        confidence = min(0.90, confidence + 0.05)
+    elif symptom_count == 0:
+        confidence = max(0.30, confidence - 0.15)
+    
+    # Round to 2 decimal places
+    confidence = round(confidence, 2)
     
     # Determine risk level
-    if score >= 8:
-        return "HIGH", 0.6
-    elif score >= 4:
-        return "MODERATE", 0.5
+    if risk_score >= 8:
+        return "HIGH", confidence
+    elif risk_score >= 4:
+        return "MODERATE", confidence
     else:
-        return "LOW", 0.5
+        return "LOW", confidence
 
 
 def create_fallback_assessment(patient: PatientScreening, error_msg: str) -> RMDAssessment:

@@ -4,6 +4,8 @@ An AI-powered clinical decision support prototype for early detection of **Rheum
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-red.svg)](https://streamlit.io/)
+[![LangChain](https://img.shields.io/badge/LangChain-Agent-green.svg)](https://langchain.com/)
+[![FHIR R4](https://img.shields.io/badge/FHIR-R4-orange.svg)](https://www.hl7.org/fhir/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
@@ -24,47 +26,48 @@ This project demonstrates an AI-enabled clinical decision support system for the
 
 ## ✨ Features
 
-- **🤖 Agentic AI**: Uses LLM + tools pattern for robust clinical reasoning
-- **📊 FHIR-Inspired Data Models**: Structured data aligned with healthcare standards
-- **🔍 Explainable AI**: Transparent reasoning with red flag identification
+- **🤖 LangChain ReAct Agent**: True agentic AI where the LLM **decides which tools to use**
+- **🏥 FHIR R4 Compliance**: Proper HL7 FHIR resources (Patient, Observation, RiskAssessment)
+- **🆓 Free LLM API**: Uses Groq's generous free tier (no cost!)
+- **🔍 Explainable AI**: Transparent reasoning showing which tools the agent used
 - **🎨 Clean Web Interface**: User-friendly Streamlit application
 - **⚡ Demo Mode**: Works without API key using rule-based analysis
-- **🚀 Easy Deployment**: Ready for Hugging Face Spaces
+- **📦 Healthcare Standards**: SNOMED CT codes, proper clinical terminology
 
-## 🖼️ Screenshot
+## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  🩺 RMD-Health Screening Agent                                  │
-├─────────────────────────────────────────────────────────────────┤
-│  ⚠️ IMPORTANT DISCLAIMER                                        │
-│  This is a DEMONSTRATION PROTOTYPE only...                      │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  📝 Patient Screening Form                                      │
-│  ┌─────────────────┐  ┌─────────────────┐                      │
-│  │ Age: [45]       │  │ Sex: [Female ▼] │                      │
-│  └─────────────────┘  └─────────────────┘                      │
-│                                                                 │
-│  🦴 Joint Symptoms                                              │
-│  [✓] Joint Pain         Severity: [7/10]                       │
-│  [✓] Multiple Joints    [✓] Morning Stiffness (60 min)        │
-│                                                                 │
-│  🔴 Inflammatory Signs                                          │
-│  [✓] Joint Swelling     [✓] Joint Redness                      │
-│                                                                 │
-│  [🔍 Run RMD Screening Assessment]                              │
-│                                                                 │
-├─────────────────────────────────────────────────────────────────┤
-│  📊 Assessment Results                                          │
+│                    Streamlit Web Interface                       │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                  LangChain ReAct Agent                           │
 │  ┌─────────────────────────────────────────────────────────────┐│
-│  │ 🔴 Risk Level: HIGH                                         ││
+│  │  LLM (Groq - Free!)  →  DECIDES which tools to use          ││
 │  └─────────────────────────────────────────────────────────────┘│
-│  Confidence: 85%  |  Conditions: 3  |  Red Flags: 4            │
-│                                                                 │
-│  🏥 Possible Conditions: Rheumatoid Arthritis, Inflammatory... │
-│  ⚠️ Red Flags: Polyarticular involvement, Morning stiffness... │
-│  📋 Next Step: Urgent rheumatology referral recommended        │
+│                             │                                    │
+│           ┌─────────────────┼─────────────────┐                 │
+│           ▼                 ▼                 ▼                 │
+│  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐      │
+│  │analyze_inflam- │ │analyze_joint_  │ │calculate_risk_ │      │
+│  │matory_markers  │ │pattern         │ │score           │      │
+│  └────────────────┘ └────────────────┘ └────────────────┘      │
+│           ▼                 ▼                 ▼                 │
+│  ┌────────────────┐ ┌────────────────┐                         │
+│  │analyze_systemic│ │get_differential│                         │
+│  │_symptoms       │ │_diagnosis      │                         │
+│  └────────────────┘ └────────────────┘                         │
+└─────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    FHIR R4 Bundle                                │
+│  ┌──────────┐  ┌─────────────┐  ┌────────────────┐             │
+│  │ Patient  │  │ Observation │  │ RiskAssessment │             │
+│  │ Resource │  │ Resources   │  │ Resource       │             │
+│  └──────────┘  └─────────────┘  └────────────────┘             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,10 +93,17 @@ source venv/bin/activate  # macOS/Linux
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables
+# Set up environment variables (optional - demo mode works without it)
 cp .env.example .env
-# Edit .env and add your xAI API key (optional - demo mode works without it)
+# Edit .env and add your FREE Groq API key
 ```
+
+### Get Your FREE API Key
+
+1. Go to [https://console.groq.com](https://console.groq.com)
+2. Sign up with Google or GitHub (free!)
+3. Navigate to API Keys
+4. Create a new key and paste it in your `.env` file
 
 ### Running the Application
 
@@ -105,17 +115,19 @@ The application will open in your browser at `http://localhost:8501`
 
 ## 🔑 API Key Setup (Optional)
 
-The application works in **Demo Mode** without an API key, using rule-based analysis.
+The application works in **Demo Mode** without an API key, using rule-based analysis with simulated agent tools.
 
-For full AI-powered assessment, get a free xAI API key:
+For full AI-powered assessment with the LangChain ReAct agent, get a free Groq API key:
 
-1. Go to [https://console.x.ai/](https://console.x.ai/)
-2. Sign up with your X (Twitter) account
+1. Go to [https://console.groq.com](https://console.groq.com)
+2. Sign up with Google or GitHub (completely FREE!)
 3. Create a new API key
 4. Add it to your `.env` file:
    ```
-   XAI_API_KEY=your_api_key_here
+   GROQ_API_KEY=gsk_your_actual_api_key_here
    ```
+
+**Note:** Groq offers generous free tier limits - much better than paid APIs!
 
 ## 📁 Project Structure
 
@@ -220,9 +232,11 @@ git push
 
 - **Python 3.10+** - Core language
 - **Streamlit** - Web interface
-- **Pydantic v2** - Data validation
-- **xAI Grok API** - LLM inference
-- **Requests** - HTTP client
+- **LangChain + LangGraph** - Agentic AI framework
+- **Groq API** - FREE LLM inference (Llama 3.1)
+- **Pydantic v2** - Data validation + FHIR modeling
+- **FHIR R4** - Healthcare interoperability standard
+- **SNOMED CT** - Clinical terminology codes
 - **python-dotenv** - Environment management
 
 ## 🤝 Relevance to RMD-Health Project
@@ -231,11 +245,12 @@ This demo addresses key job requirements:
 
 | Requirement | Implementation |
 |-------------|----------------|
-| AI/ML integration | Agentic AI with LLM reasoning |
-| FHIR interoperability | FHIR-inspired data models |
-| Software engineering | Clean architecture, modular code |
-| Explainable AI | Transparent reasoning, red flags |
-| NHS context | SNOMED mappings, referral pathways |
+| AI/ML integration | **LangChain ReAct Agent** - LLM decides which tools to use |
+| FHIR interoperability | **Full FHIR R4 Resources** with SNOMED CT codes |
+| Software engineering | **Clean architecture** with proper agent patterns |
+| Explainable AI | **Transparent reasoning** showing agent tool usage |
+| NHS context | SNOMED mappings, clinical pathways, proper medical terminology |
+| Modern AI practices | **Agentic AI**, tool-based reasoning, free API integration |
 
 ## 📄 License
 
