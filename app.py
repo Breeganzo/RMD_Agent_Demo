@@ -1,799 +1,531 @@
 """
-RMD-Health Screening Agent - Professional Streamlit Application
-================================================================
+RMD-Health Multi-User Application
+=================================
 
-A clinical decision support prototype demonstrating:
-- Explainable AI (XAI) for healthcare
-- Role-based explanations (Clinicians, Patients, Auditors)
-- FHIR R4 healthcare data standards
-- LangChain ReAct Agentic AI
+Streamlit application with authentication and role-based dashboards.
 
-Built for University of Reading RMD-Health Project Interview Demonstration
-
-IMPORTANT DISCLAIMER:
-This is a DEMONSTRATION PROTOTYPE only. NOT for clinical use.
-
-Run with: streamlit run app.py
+User Types:
+- Patient: Can view own history, create new assessments
+- Clinician: Can view all patients, access their assessments
+- Auditor: Can view all audit logs and compliance data
 """
 
 import streamlit as st
 import json
-from datetime import datetime
-import os
-from pathlib import Path
 import uuid
+from datetime import datetime
+from pathlib import Path
 
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv()
-
-# Import our modules
-from src.data_models import PatientScreening, Symptom, RMDAssessment
-from src.rmd_agent import RMDScreeningAgent, demo_assessment
-from src.fhir_resources import create_screening_bundle, FHIRBundle
-from src.xai_explanations import (
-    UserRole, XAIExplanation, generate_xai_explanation, 
-    get_explanation_for_role, FeatureContribution
-)
-
-# =============================================================================
-# PAGE CONFIGURATION
-# =============================================================================
-
+# Page config must be first
 st.set_page_config(
-    page_title="RMD-Health | AI Screening Agent",
+    page_title="RMD-Health Screening",
     page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        'About': """
-        # RMD-Health Screening Agent
-        
-        An AI-powered clinical decision support prototype for early detection of 
-        Rheumatic and Musculoskeletal Diseases (RMDs).
-        
-        Built for the University of Reading RMD-Health Project.
-        
-        **DISCLAIMER:** This is a demonstration prototype only.
-        """
-    }
+    initial_sidebar_state="expanded"
 )
 
+# Imports
+from src.database import (
+    authenticate_user, register_user, get_patient_profile,
+    update_patient_profile, save_assessment, get_patient_assessments,
+    get_all_patients, get_all_audit_logs, get_patient_audit_logs,
+    get_assessment_by_id, export_to_csv
+)
+from src.data_models import PatientScreening, Symptom, RMDAssessment
+from src.rmd_agent import RMDScreeningAgent, demo_assessment
+from src.xai_explanations import generate_xai_explanation, XAIExplanation, UserRole
+from src.fhir_resources import create_screening_bundle
+
+
 # =============================================================================
-# CUSTOM CSS - Professional Healthcare UI
+# NHS GDPR COMPLIANCE HELPERS
+# =============================================================================
+
+def pseudonymize_id(user_id: int) -> str:
+    """Generate a pseudonymized patient identifier for display.
+    
+    NHS GDPR Compliance: Patient identifiers should be pseudonymized
+    when displayed to clinicians/auditors to minimize PII exposure.
+    Real identity is only accessible through proper audit trails.
+    """
+    import hashlib
+    hash_obj = hashlib.sha256(f"RMD-PATIENT-{user_id}".encode())
+    return f"PT-{hash_obj.hexdigest()[:8].upper()}"
+
+
+def get_privacy_display_name(user: dict, viewer_role: str) -> str:
+    """Get appropriate display name based on viewer's role.
+    
+    NHS Caldicott Principles: Use minimum necessary identifiable information.
+    - Patients see their own name
+    - Clinicians see pseudonymized ID + initials only
+    - Auditors see pseudonymized ID only
+    """
+    if viewer_role == 'patient':
+        return user.get('name', 'Unknown')
+    elif viewer_role == 'clinician':
+        name = user.get('name', '')
+        initials = ''.join(word[0].upper() for word in name.split() if word)
+        return f"{pseudonymize_id(user['id'])} ({initials})"
+    else:  # auditor
+        return pseudonymize_id(user['id'])
+
+
+def mask_email(email: str) -> str:
+    """Mask email for privacy compliance."""
+    if not email or '@' not in email:
+        return "[REDACTED]"
+    local, domain = email.split('@')
+    return f"{local[:2]}***@{domain}"
+
+
+# =============================================================================
+# CUSTOM CSS
 # =============================================================================
 
 st.markdown("""
 <style>
     /* Main container */
-    .main .block-container {
-        padding-top: 2rem;
-        max-width: 1200px;
-    }
-    
-    /* Role selection cards */
-    .role-card {
-        border-radius: 12px;
-        padding: 24px;
-        text-align: center;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        border: 2px solid transparent;
-        height: 100%;
-    }
-    
-    .role-card:hover {
-        transform: translateY(-4px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-    }
-    
-    .role-clinician {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-    }
-    
-    .role-patient {
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        color: white;
-    }
-    
-    .role-auditor {
-        background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
-        color: white;
-    }
-    
-    .role-icon {
-        font-size: 48px;
-        margin-bottom: 12px;
-    }
-    
-    .role-title {
-        font-size: 20px;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-    
-    .role-desc {
-        font-size: 14px;
-        opacity: 0.9;
-    }
-    
-    /* Disclaimer banner */
-    .disclaimer-banner {
-        background: linear-gradient(90deg, #fff3cd 0%, #ffeeba 100%);
-        border-left: 5px solid #ffc107;
-        border-radius: 0 8px 8px 0;
-        padding: 16px 20px;
-        margin-bottom: 24px;
-    }
-    
-    .disclaimer-banner h4 {
-        color: #856404;
-        margin: 0 0 8px 0;
-        font-size: 16px;
-    }
-    
-    .disclaimer-banner p {
-        color: #856404;
-        margin: 0;
-        font-size: 14px;
-    }
-    
-    /* Risk level badges */
-    .risk-badge {
-        display: inline-block;
-        padding: 8px 24px;
-        border-radius: 50px;
-        font-weight: 700;
-        font-size: 18px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    .risk-high {
-        background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
-        color: white;
-    }
-    
-    .risk-moderate {
-        background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%);
-        color: #333;
-    }
-    
-    .risk-low {
-        background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
-        color: white;
-    }
-    
-    /* Result cards */
-    .result-card {
-        background: white;
-        border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-        margin-bottom: 16px;
-    }
-    
-    /* Feature contribution bars */
-    .contrib-bar {
-        height: 24px;
-        border-radius: 4px;
-        margin-bottom: 8px;
-    }
-    
-    .contrib-positive {
-        background: linear-gradient(90deg, #ff416c 0%, #ff4b2b 100%);
-    }
-    
-    .contrib-negative {
-        background: linear-gradient(90deg, #11998e 0%, #38ef7d 100%);
-    }
-    
-    /* XAI Explanation tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px 8px 0 0;
-        padding: 12px 24px;
-    }
-    
-    /* Metric cards */
-    div[data-testid="stMetricValue"] {
-        font-size: 28px;
-        font-weight: 700;
-    }
-    
-    /* Header styling */
     .main-header {
-        text-align: center;
-        padding: 20px 0;
-        margin-bottom: 24px;
-    }
-    
-    .main-header h1 {
-        font-size: 2.5rem;
-        font-weight: 700;
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 8px;
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 20px;
     }
     
-    .main-header p {
-        color: #666;
-        font-size: 1.1rem;
+    /* Login card */
+    .login-card {
+        background: white;
+        padding: 30px;
+        border-radius: 15px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        max-width: 400px;
+        margin: 0 auto;
     }
     
-    /* Info boxes */
-    .info-box {
+    /* User type badges */
+    .user-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: bold;
+        text-transform: uppercase;
+    }
+    
+    .badge-patient { background: #11998e; color: white; }
+    .badge-clinician { background: #667eea; color: white; }
+    .badge-auditor { background: #eb3349; color: white; }
+    
+    /* Risk badges */
+    .risk-high { background: #ff4b2b; color: white; padding: 4px 12px; border-radius: 20px; }
+    .risk-moderate { background: #ffd200; color: #333; padding: 4px 12px; border-radius: 20px; }
+    .risk-low { background: #38ef7d; color: white; padding: 4px 12px; border-radius: 20px; }
+    
+    /* Cards */
+    .patient-card {
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        margin-bottom: 10px;
+        border-left: 4px solid #667eea;
+    }
+    
+    .audit-entry {
         background: #f8f9fa;
+        padding: 10px 15px;
         border-radius: 8px;
-        padding: 16px;
-        margin: 12px 0;
+        margin-bottom: 8px;
+        font-family: monospace;
+        font-size: 13px;
     }
     
-    /* Hide Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
+    /* Disclaimer */
+    .disclaimer {
+        background: #fff3cd;
+        border-left: 4px solid #ffc107;
+        padding: 15px;
+        border-radius: 0 8px 8px 0;
+        margin-bottom: 20px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # =============================================================================
-# SESSION STATE INITIALIZATION
+# SESSION STATE
 # =============================================================================
 
-def init_session_state():
-    """Initialize session state variables."""
-    if 'user_role' not in st.session_state:
-        st.session_state.user_role = None
+def init_session():
+    """Initialize session state."""
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'page' not in st.session_state:
+        st.session_state.page = 'login'
+    if 'selected_patient' not in st.session_state:
+        st.session_state.selected_patient = None
+    if 'selected_assessment' not in st.session_state:
+        st.session_state.selected_assessment = None
     if 'demo_mode' not in st.session_state:
         st.session_state.demo_mode = True
-    if 'assessment_complete' not in st.session_state:
-        st.session_state.assessment_complete = False
-    if 'current_assessment' not in st.session_state:
-        st.session_state.current_assessment = None
-    if 'current_patient' not in st.session_state:
-        st.session_state.current_patient = None
-    if 'xai_explanation' not in st.session_state:
-        st.session_state.xai_explanation = None
-    if 'sample_data' not in st.session_state:
-        st.session_state.sample_data = None
 
 
 # =============================================================================
-# COMPONENT: DISCLAIMER BANNER
+# LOGIN PAGE
 # =============================================================================
 
-def show_disclaimer():
-    """Display the important disclaimer banner."""
-    st.markdown("""
-    <div class="disclaimer-banner">
-        <h4>⚠️ IMPORTANT DISCLAIMER - DEMONSTRATION PROTOTYPE</h4>
-        <p>
-            This is a <strong>demonstration prototype</strong> built for educational and interview purposes. 
-            It is <strong>NOT</strong> intended for clinical use, real patient data, or medical decision-making. 
-            All outputs are simulated and should NOT be considered medical advice. 
-            Always consult qualified healthcare professionals.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# =============================================================================
-# COMPONENT: ROLE SELECTION
-# =============================================================================
-
-def show_role_selection():
-    """Display the role selection interface."""
+def show_login_page():
+    """Display login/register page."""
+    
     st.markdown("""
     <div class="main-header">
-        <h1>🏥 RMD-Health Screening Agent</h1>
-        <p>AI-Powered Clinical Decision Support with Explainable AI</p>
+        <h1>🏥 RMD-Health</h1>
+        <p>AI-Powered Rheumatoid Disease Screening</p>
     </div>
     """, unsafe_allow_html=True)
     
-    show_disclaimer()
+    col1, col2, col3 = st.columns([1, 2, 1])
     
-    st.markdown("### 👤 Select Your Role")
-    st.markdown("Choose how you'd like to view the AI's explanations:")
+    with col2:
+        tab1, tab2 = st.tabs(["🔐 Login", "📝 Register"])
+        
+        with tab1:
+            st.markdown("### Welcome Back")
+            
+            email = st.text_input("Email", key="login_email")
+            password = st.text_input("Password", type="password", key="login_password")
+            
+            if st.button("Login", type="primary", use_container_width=True):
+                user = authenticate_user(email, password)
+                if user:
+                    st.session_state.user = user
+                    st.session_state.page = 'dashboard'
+                    st.rerun()
+                else:
+                    st.error("Invalid email or password")
+            
+            st.markdown("---")
+            st.markdown("**Demo Accounts:**")
+            st.code("""
+Auditor:    auditor@rmd-health.demo / admin123
+Clinician:  clinician@rmd-health.demo / clinician123
+Patient 1:  patient1@rmd-health.demo / patient123
+Patient 2:  patient2@rmd-health.demo / patient123
+            """)
+        
+        with tab2:
+            st.markdown("### Create Account")
+            
+            reg_name = st.text_input("Full Name", key="reg_name")
+            reg_email = st.text_input("Email", key="reg_email")
+            reg_password = st.text_input("Password", type="password", key="reg_password")
+            reg_confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
+            
+            if st.button("Register as Patient", type="primary", use_container_width=True):
+                if not all([reg_name, reg_email, reg_password]):
+                    st.error("Please fill all fields")
+                elif reg_password != reg_confirm:
+                    st.error("Passwords don't match")
+                elif register_user(reg_email, reg_password, reg_name, "patient"):
+                    st.success("Account created! Please login.")
+                else:
+                    st.error("Email already registered")
+
+
+# =============================================================================
+# PATIENT DASHBOARD
+# =============================================================================
+
+def show_patient_dashboard():
+    """Dashboard for patients - view history, create assessments."""
+    user = st.session_state.user
+    
+    st.markdown(f"""
+    <div class="main-header">
+        <h1>🏥 RMD-Health</h1>
+        <p>Welcome, {user['name']} <span class="user-badge badge-patient">Patient</span></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown(f"### 👤 {user['name']}")
+        st.markdown(f"*{mask_email(user['email'])}*")
+        st.markdown("---")
+        
+        # AI Mode Toggle
+        st.markdown("#### 🤖 AI Mode")
+        agent = RMDScreeningAgent()
+        if agent.is_configured():
+            demo_mode = st.toggle("Demo Mode", value=st.session_state.get('demo_mode', False),
+                                  help="Toggle between Live AI (Groq LLM) and Demo Mode (rule-based)")
+            st.session_state.demo_mode = demo_mode
+            if demo_mode:
+                st.caption("📴 Using rule-based demo")
+            else:
+                st.caption("🟢 Using Groq LLM (Agentic AI)")
+        else:
+            st.warning("⚠️ API not configured")
+            st.caption("Set GROQ_API_KEY in .env")
+            st.session_state.demo_mode = True
+        
+        st.markdown("---")
+        
+        page = st.radio("Navigation", [
+            "📊 My Health Dashboard",
+            "➕ New Assessment",
+            "📋 My History",
+            "⚙️ Settings"
+        ])
+        
+        st.markdown("---")
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.user = None
+            st.session_state.page = 'login'
+            st.rerun()
+    
+    # Main content
+    if "Dashboard" in page:
+        show_patient_home(user)
+    elif "New Assessment" in page:
+        show_patient_assessment_form(user)
+    elif "History" in page:
+        show_patient_history(user)
+    elif "Settings" in page:
+        show_patient_settings(user)
+
+
+def show_patient_home(user):
+    """Patient home/dashboard."""
+    st.markdown("### 📊 Your Health Dashboard")
+    
+    # Get assessments
+    assessments = get_patient_assessments(user['id'])
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("""
-        <div class="role-card role-clinician">
-            <div class="role-icon">👨‍⚕️</div>
-            <div class="role-title">Healthcare Clinician</div>
-            <div class="role-desc">
-                Technical explanations with clinical terminology, 
-                evidence references, and detailed reasoning traces
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Continue as Clinician", key="btn_clinician", use_container_width=True):
-            st.session_state.user_role = UserRole.CLINICIAN
-            st.rerun()
-    
+        st.metric("Total Assessments", len(assessments))
     with col2:
-        st.markdown("""
-        <div class="role-card role-patient">
-            <div class="role-icon">🧑‍🤝‍🧑</div>
-            <div class="role-title">Patient</div>
-            <div class="role-desc">
-                Simple, reassuring explanations in plain language
-                with clear next steps and support information
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Continue as Patient", key="btn_patient", use_container_width=True):
-            st.session_state.user_role = UserRole.PATIENT
-            st.rerun()
-    
+        if assessments:
+            last = assessments[0]
+            st.metric("Last Risk Level", last['risk_level'])
+        else:
+            st.metric("Last Risk Level", "No assessments yet")
     with col3:
-        st.markdown("""
-        <div class="role-card role-auditor">
-            <div class="role-icon">📋</div>
-            <div class="role-title">Regulator / Auditor</div>
-            <div class="role-desc">
-                Complete audit trails, decision logs, timestamps,
-                and regulatory compliance documentation
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Continue as Auditor", key="btn_auditor", use_container_width=True):
-            st.session_state.user_role = UserRole.AUDITOR
-            st.rerun()
+        high_risk_count = sum(1 for a in assessments if a['risk_level'] == 'HIGH')
+        st.metric("High Risk Assessments", high_risk_count)
     
-    # Demo info
     st.markdown("---")
-    with st.expander("ℹ️ About This Demo", expanded=False):
-        st.markdown("""
-        ### What is this?
-        
-        This is a demonstration of **Explainable AI (XAI)** in healthcare, showing how AI systems can provide 
-        different explanations to different audiences while maintaining transparency and trust.
-        
-        ### Key Features:
-        
-        - **🤖 Agentic AI**: Uses LangChain ReAct agents that autonomously decide which analysis tools to use
-        - **🔍 Explainable AI**: Provides LIME/SHAP-style feature contributions and reasoning traces
-        - **🏥 FHIR R4 Compliance**: Outputs proper HL7 FHIR healthcare data resources
-        - **👥 Role-Based Views**: Tailored explanations for clinicians, patients, and auditors
-        - **📊 Audit Trails**: Complete decision logging for regulatory compliance
-        
-        ### Technology Stack:
-        
-        - **LangChain + LangGraph**: Agentic AI framework
-        - **Groq API**: Free LLM inference (Llama 3.1)
-        - **Streamlit**: Interactive web interface
-        - **FHIR R4**: Healthcare interoperability standard
-        - **Pydantic**: Data validation
-        """)
-
-
-# =============================================================================
-# COMPONENT: SIDEBAR
-# =============================================================================
-
-def create_sidebar():
-    """Create the sidebar with settings and information."""
-    with st.sidebar:
-        # Logo and title
-        st.markdown("### 🏥 RMD-Health Agent")
-        
-        # Current role display
-        if st.session_state.user_role:
-            role_info = {
-                UserRole.CLINICIAN: ("👨‍⚕️", "Clinician View", "#667eea"),
-                UserRole.PATIENT: ("🧑‍🤝‍🧑", "Patient View", "#11998e"),
-                UserRole.AUDITOR: ("📋", "Auditor View", "#eb3349"),
-            }
-            icon, name, color = role_info[st.session_state.user_role]
+    
+    # Recent assessments
+    st.markdown("### 📋 Recent Results")
+    
+    if not assessments:
+        st.info("You haven't completed any assessments yet. Click 'New Assessment' to start.")
+    else:
+        for assessment in assessments[:3]:
+            risk_class = f"risk-{assessment['risk_level'].lower()}"
             st.markdown(f"""
-            <div style="background: {color}; color: white; padding: 12px; 
-                        border-radius: 8px; text-align: center; margin-bottom: 16px;">
-                <span style="font-size: 24px;">{icon}</span><br>
-                <strong>{name}</strong>
+            <div class="patient-card">
+                <strong>Assessment #{assessment['assessment_number']}</strong> 
+                <span class="{risk_class}">{assessment['risk_level']}</span>
+                <br>
+                <small>Date: {assessment['created_at']} | Confidence: {assessment['confidence_score']:.0%}</small>
             </div>
             """, unsafe_allow_html=True)
-            
-            # Quick role switch (preserves assessment)
-            if st.session_state.assessment_complete:
-                st.success("✅ Assessment complete!")
-                st.markdown("**🔄 View same result as:**")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if st.button("👨‍⚕️\nDoc", help="Clinician View", key="sw_clin", 
-                                disabled=st.session_state.user_role == UserRole.CLINICIAN,
-                                use_container_width=True):
-                        st.session_state.user_role = UserRole.CLINICIAN
-                        st.rerun()
-                with col2:
-                    if st.button("🧑‍🤝‍🧑\nPat", help="Patient View", key="sw_pat",
-                                disabled=st.session_state.user_role == UserRole.PATIENT,
-                                use_container_width=True):
-                        st.session_state.user_role = UserRole.PATIENT
-                        st.rerun()
-                with col3:
-                    if st.button("📋\nAudit", help="Auditor View", key="sw_aud",
-                                disabled=st.session_state.user_role == UserRole.AUDITOR,
-                                use_container_width=True):
-                        st.session_state.user_role = UserRole.AUDITOR
-                        st.rerun()
-                st.caption("Same risk level, different explanations")
-                st.markdown("---")
-            
-            if st.button("🔄 Start New Assessment", use_container_width=True):
-                st.session_state.user_role = None
-                st.session_state.assessment_complete = False
-                st.session_state.current_assessment = None
-                st.session_state.current_patient = None
-                st.session_state.xai_explanation = None
-                st.session_state.sample_data = None
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # API Configuration
-        st.markdown("### ⚙️ Settings")
-        
-        agent = RMDScreeningAgent()
-        api_configured = agent.is_configured()
-        
-        if api_configured:
-            st.success("✅ Groq API Connected")
-            demo_mode = st.toggle("Use Demo Mode", value=False, 
-                                 help="Run without API calls using rule-based analysis")
-        else:
-            st.warning("⚠️ No API Key")
-            st.info("Get FREE key at [console.groq.com](https://console.groq.com)")
-            demo_mode = True
-        
-        st.session_state.demo_mode = demo_mode
-        
-        if demo_mode:
-            st.info("📋 Demo Mode: Using rule-based analysis")
-        
-        st.markdown("---")
-        
-        # Quick load samples
-        st.markdown("### 📋 Sample Data")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔴 High Risk", use_container_width=True, help="Load high-risk patient example"):
-                load_sample_data("high_risk")
-        with col2:
-            if st.button("🟢 Low Risk", use_container_width=True, help="Load low-risk patient example"):
-                load_sample_data("low_risk")
-        
-        st.markdown("---")
-        
-        # About section
-        st.markdown("### ℹ️ About")
-        st.markdown("""
-        **RMD-Health Screening Agent**
-        
-        Built for the University of Reading 
-        AI Software Engineer role interview.
-        
-        *Demonstrating:*
-        - Agentic AI (LangChain)
-        - Explainable AI (XAI)
-        - FHIR R4 Standards
-        - NHS Digital Compliance
-        
-        ---
-        
-        *This is a prototype demonstration only.*
-        """)
 
-
-# =============================================================================
-# SAMPLE DATA LOADER
-# =============================================================================
 
 def load_sample_data(risk_type: str):
-    """Load sample patient data."""
-    sample_file = Path("sample_data/example_patient.json")
-    
-    if sample_file.exists():
-        with open(sample_file, "r") as f:
-            data = json.load(f)
-        if risk_type in data:
-            st.session_state.sample_data = data[risk_type]
-    else:
-        # Fallback sample data
-        if risk_type == "high_risk":
-            st.session_state.sample_data = {
-                "age": 52,
-                "sex": "Female",
-                "joint_pain": True,
-                "joint_pain_severity": 8,
-                "multiple_joints": True,
-                "morning_stiffness": True,
-                "morning_stiffness_duration": 75,
-                "joint_swelling": True,
-                "joint_redness": True,
-                "fatigue": True,
-                "fatigue_severity": 7,
-                "fever": False,
-                "weight_loss": False,
-                "skin_rash": False,
-                "medical_history": "Family history of RA (mother and aunt). Hypothyroidism diagnosed 2020."
-            }
-        else:
-            st.session_state.sample_data = {
-                "age": 32,
-                "sex": "Male",
-                "joint_pain": True,
-                "joint_pain_severity": 3,
-                "multiple_joints": False,
-                "morning_stiffness": False,
-                "morning_stiffness_duration": 5,
-                "joint_swelling": False,
-                "joint_redness": False,
-                "fatigue": False,
-                "fatigue_severity": 2,
-                "fever": False,
-                "weight_loss": False,
-                "skin_rash": False,
-                "medical_history": "Occasional knee pain after running. Active lifestyle, plays football weekly."
-            }
-    
-    # Update widget keys directly from sample data
-    sample = st.session_state.sample_data
-    st.session_state.input_age = sample.get("age", 45)
-    st.session_state.input_sex = sample.get("sex", "Female")
-    st.session_state.input_joint_pain = sample.get("joint_pain", False)
-    st.session_state.input_joint_pain_severity = sample.get("joint_pain_severity", 5)
-    st.session_state.input_multiple_joints = sample.get("multiple_joints", False)
-    st.session_state.input_morning_stiffness = sample.get("morning_stiffness", False)
-    st.session_state.input_stiffness_duration = sample.get("morning_stiffness_duration", 30)
-    st.session_state.input_joint_swelling = sample.get("joint_swelling", False)
-    st.session_state.input_joint_redness = sample.get("joint_redness", False)
-    st.session_state.input_fatigue = sample.get("fatigue", False)
-    st.session_state.input_fatigue_severity = sample.get("fatigue_severity", 5)
-    st.session_state.input_fever = sample.get("fever", False)
-    st.session_state.input_weight_loss = sample.get("weight_loss", False)
-    st.session_state.input_skin_rash = sample.get("skin_rash", False)
-    st.session_state.input_medical_history = sample.get("medical_history", "")
-    
+    """Load sample patient data into session state."""
+    if risk_type == "high_risk":
+        st.session_state.sample_data = {
+            "age": 52,
+            "sex": "Female",
+            "joint_pain": True,
+            "joint_pain_severity": 8,
+            "multiple_joints": True,
+            "morning_stiffness": True,
+            "morning_stiffness_duration": 75,
+            "joint_swelling": True,
+            "joint_redness": True,
+            "fatigue": True,
+            "fatigue_severity": 7,
+            "fever": False,
+            "weight_loss": False,
+            "skin_rash": False,
+            "medical_history": "Family history of RA (mother and aunt). Hypothyroidism diagnosed 2020."
+        }
+    elif risk_type == "moderate_risk":
+        st.session_state.sample_data = {
+            "age": 45,
+            "sex": "Male",
+            "joint_pain": True,
+            "joint_pain_severity": 5,
+            "multiple_joints": True,
+            "morning_stiffness": True,
+            "morning_stiffness_duration": 35,
+            "joint_swelling": True,
+            "joint_redness": False,
+            "fatigue": True,
+            "fatigue_severity": 5,
+            "fever": False,
+            "weight_loss": False,
+            "skin_rash": False,
+            "medical_history": "Desk job, occasional sports. Father has osteoarthritis."
+        }
+    else:  # low_risk
+        st.session_state.sample_data = {
+            "age": 32,
+            "sex": "Male",
+            "joint_pain": True,
+            "joint_pain_severity": 3,
+            "multiple_joints": False,
+            "morning_stiffness": False,
+            "morning_stiffness_duration": 5,
+            "joint_swelling": False,
+            "joint_redness": False,
+            "fatigue": False,
+            "fatigue_severity": 2,
+            "fever": False,
+            "weight_loss": False,
+            "skin_rash": False,
+            "medical_history": "Occasional knee pain after running. Active lifestyle, plays football weekly."
+        }
     st.rerun()
 
 
-def get_default_value(key: str, default):
-    """Get value from sample data or return default."""
-    if st.session_state.sample_data:
-        return st.session_state.sample_data.get(key, default)
-    return default
-
-
-# =============================================================================
-# COMPONENT: PATIENT SCREENING FORM  
-# =============================================================================
-
-def init_form_state():
-    """Initialize form state for dynamic slider enabling."""
-    if 'form_joint_pain' not in st.session_state:
-        st.session_state.form_joint_pain = get_default_value("joint_pain", False)
-    if 'form_morning_stiffness' not in st.session_state:
-        st.session_state.form_morning_stiffness = get_default_value("morning_stiffness", False)
-    if 'form_fatigue' not in st.session_state:
-        st.session_state.form_fatigue = get_default_value("fatigue", False)
-
-
-def create_screening_form() -> PatientScreening | None:
-    """Create the patient screening form with dynamic slider enabling."""
+def show_patient_assessment_form(user):
+    """New assessment form for patients."""
+    st.markdown("### ➕ New Symptom Assessment")
     
-    init_form_state()
+    # NHS CDSS Compliance Disclaimer
+    st.markdown("""
+    <div class="disclaimer" style="background: #fff3cd; border: 2px solid #ffc107; padding: 15px; border-radius: 10px; margin-bottom: 20px;">
+        <h4 style="color: #856404; margin-top: 0;">⚠️ IMPORTANT CLINICAL DECISION SUPPORT DISCLAIMER</h4>
+        <p style="color: #856404; margin-bottom: 10px;">
+            <strong>This is a CLASS IIa MEDICAL DEVICE under UK MDR 2002 used for SCREENING ONLY.</strong>
+        </p>
+        <ul style="color: #856404; margin-bottom: 10px;">
+            <li>This tool does <strong>NOT</strong> provide medical diagnosis</li>
+            <li>Results are <strong>indicative only</strong> and require clinical validation</li>
+            <li>Always consult a qualified healthcare professional</li>
+            <li>If you experience severe symptoms, seek immediate medical attention</li>
+        </ul>
+        <p style="color: #856404; font-size: 12px; margin-bottom: 0;">
+            <strong>NHS NICE Compliance:</strong> This CDSS follows NICE Evidence Standards Framework (ESF) for Digital Health Technologies.
+            <br><strong>Data Protection:</strong> Your data is processed in accordance with UK GDPR and NHS Data Security Standards.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    # Form header based on role
-    role = st.session_state.user_role
-    if role == UserRole.CLINICIAN:
-        st.markdown("### 📋 Patient Symptom Assessment")
-        st.markdown("Enter clinical findings for RMD risk screening:")
-    elif role == UserRole.PATIENT:
-        st.markdown("### 📝 Tell Us About Your Symptoms")
-        st.markdown("Please answer these questions about how you've been feeling:")
-    else:
-        st.markdown("### 📊 Patient Data Input")
-        st.markdown("Enter screening parameters for assessment:")
+    # Sample data buttons
+    st.markdown("#### 📋 Quick Fill Sample Data")
+    st.caption("Use these to quickly fill the form with example patient data:")
     
-    # =========================================================================
-    # DEMOGRAPHICS SECTION (Outside form for proper interaction)
-    # =========================================================================
-    st.markdown("#### Basic Information")
-    col1, col2 = st.columns(2)
-    
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
     with col1:
-        age = st.slider(
-            "Age" if role != UserRole.PATIENT else "Your Age",
-            min_value=18, max_value=100,
-            value=get_default_value("age", 45),
-            help="Age in years",
-            key="input_age"
-        )
-    
+        if st.button("🔴 High Risk", help="52yo female with severe RA symptoms"):
+            load_sample_data("high_risk")
     with col2:
-        sex_label = "Sex" if role != UserRole.PATIENT else "Your Sex"
-        sex = st.selectbox(
-            sex_label,
-            options=["Male", "Female", "Other", "Prefer not to say"],
-            index=["Male", "Female", "Other", "Prefer not to say"].index(
-                get_default_value("sex", "Female")
-            ),
-            key="input_sex"
-        )
+        if st.button("🟡 Moderate Risk", help="45yo male with moderate symptoms"):
+            load_sample_data("moderate_risk")
+    with col3:
+        if st.button("🟢 Low Risk", help="32yo male with mild symptoms"):
+            load_sample_data("low_risk")
+    with col4:
+        if st.button("🗑️ Clear", help="Reset form to defaults"):
+            st.session_state.sample_data = None
+            st.rerun()
     
     st.markdown("---")
     
-    # =========================================================================
-    # JOINT SYMPTOMS - Dynamic checkboxes and sliders
-    # =========================================================================
+    # Get sample data if loaded
+    sample = st.session_state.get('sample_data', None)
+    
+    # Helper function to get default values
+    def get_val(key, profile_key=None, default=None):
+        if sample and key in sample:
+            return sample[key]
+        if profile and profile_key and profile.get(profile_key):
+            return profile[profile_key]
+        return default
+    
+    # Get profile
+    profile = get_patient_profile(user['id'])
+    
+    st.markdown("#### Basic Information")
+    col1, col2 = st.columns(2)
+    with col1:
+        default_age = get_val('age', 'age', 45)
+        age = st.slider("Your Age", 18, 100, default_age)
+    with col2:
+        default_sex = get_val('sex', 'sex', 'Female')
+        sex_options = ["Male", "Female", "Other"]
+        sex_idx = sex_options.index(default_sex) if default_sex in sex_options else 1
+        sex = st.selectbox("Your Sex", sex_options, index=sex_idx)
+    
+    st.markdown("---")
     st.markdown("#### 🦴 Joint Symptoms")
     
     col1, col2 = st.columns(2)
     with col1:
-        joint_pain_label = "Joint Pain" if role != UserRole.PATIENT else "Do you have joint pain?"
-        joint_pain = st.checkbox(
-            joint_pain_label,
-            value=get_default_value("joint_pain", False),
-            key="input_joint_pain"
-        )
+        joint_pain = st.checkbox("Do you have joint pain?", value=get_val('joint_pain', None, False))
     with col2:
-        jp_severity_label = "Pain Severity (0-10)" if role != UserRole.PATIENT else "How bad is the pain? (0=none, 10=worst)"
-        joint_pain_severity = st.slider(
-            jp_severity_label,
-            0, 10,
-            value=get_default_value("joint_pain_severity", 5),
-            disabled=not joint_pain,
-            key="input_joint_pain_severity",
-            help="Enable by checking 'Joint Pain'" if not joint_pain else "Rate your pain level"
-        )
+        joint_pain_severity = st.slider("How bad is the pain? (0-10)", 0, 10, 
+                                        get_val('joint_pain_severity', None, 5), 
+                                        disabled=not joint_pain)
     
-    multi_label = "Multiple Joints Affected (≥3)" if role != UserRole.PATIENT else "Is the pain in more than 2 joints?"
-    multiple_joints = st.checkbox(
-        multi_label,
-        value=get_default_value("multiple_joints", False),
-        key="input_multiple_joints"
-    )
+    multiple_joints = st.checkbox("Is the pain in more than 2 joints?", value=get_val('multiple_joints', None, False))
     
     col1, col2 = st.columns(2)
     with col1:
-        ms_label = "Morning Stiffness" if role != UserRole.PATIENT else "Are your joints stiff in the morning?"
-        morning_stiffness = st.checkbox(
-            ms_label,
-            value=get_default_value("morning_stiffness", False),
-            key="input_morning_stiffness"
-        )
+        morning_stiffness = st.checkbox("Are your joints stiff in the morning?", value=get_val('morning_stiffness', None, False))
     with col2:
-        msd_label = "Duration (minutes)" if role != UserRole.PATIENT else "How long does the stiffness last?"
-        stiffness_duration = st.slider(
-            msd_label,
-            0, 120,
-            value=get_default_value("morning_stiffness_duration", 30),
-            disabled=not morning_stiffness,
-            key="input_stiffness_duration",
-            help="Enable by checking 'Morning Stiffness'" if not morning_stiffness else "Duration in minutes"
-        )
+        stiffness_duration = st.slider("How long does stiffness last? (minutes)", 0, 120, 
+                                       get_val('morning_stiffness_duration', None, 30),
+                                       disabled=not morning_stiffness)
     
     st.markdown("---")
-    
-    # =========================================================================
-    # INFLAMMATORY SIGNS
-    # =========================================================================
     st.markdown("#### 🔴 Signs of Inflammation")
     
     col1, col2 = st.columns(2)
     with col1:
-        swelling_label = "Joint Swelling" if role != UserRole.PATIENT else "Are any joints swollen?"
-        joint_swelling = st.checkbox(
-            swelling_label,
-            value=get_default_value("joint_swelling", False),
-            key="input_joint_swelling"
-        )
+        joint_swelling = st.checkbox("Are any joints swollen?", value=get_val('joint_swelling', None, False))
     with col2:
-        redness_label = "Joint Redness/Warmth" if role != UserRole.PATIENT else "Are any joints red or warm?"
-        joint_redness = st.checkbox(
-            redness_label,
-            value=get_default_value("joint_redness", False),
-            key="input_joint_redness"
-        )
+        joint_redness = st.checkbox("Are any joints red or warm?", value=get_val('joint_redness', None, False))
     
     st.markdown("---")
-    
-    # =========================================================================
-    # SYSTEMIC SYMPTOMS
-    # =========================================================================
     st.markdown("#### 🌡️ Other Symptoms")
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        fatigue_label = "Fatigue" if role != UserRole.PATIENT else "Unusual tiredness?"
-        fatigue = st.checkbox(
-            fatigue_label,
-            value=get_default_value("fatigue", False),
-            key="input_fatigue"
-        )
-        fatigue_severity = st.slider(
-            "Fatigue Level" if role != UserRole.PATIENT else "How tired?",
-            0, 10,
-            value=get_default_value("fatigue_severity", 5),
-            disabled=not fatigue,
-            key="input_fatigue_severity",
-            help="Enable by checking 'Fatigue'" if not fatigue else "Rate your fatigue level"
-        )
-    
+        fatigue = st.checkbox("Unusual tiredness?", value=get_val('fatigue', None, False))
+        fatigue_severity = st.slider("How tired? (0-10)", 0, 10, 
+                                     get_val('fatigue_severity', None, 5), disabled=not fatigue)
     with col2:
-        fever_label = "Fever" if role != UserRole.PATIENT else "Have you had a fever?"
-        fever = st.checkbox(
-            fever_label,
-            value=get_default_value("fever", False),
-            key="input_fever"
-        )
-    
+        fever = st.checkbox("Have you had a fever?", value=get_val('fever', None, False))
     with col3:
-        wl_label = "Unexplained Weight Loss" if role != UserRole.PATIENT else "Lost weight without trying?"
-        weight_loss = st.checkbox(
-            wl_label,
-            value=get_default_value("weight_loss", False),
-            key="input_weight_loss"
-        )
+        weight_loss = st.checkbox("Lost weight without trying?", value=get_val('weight_loss', None, False))
     
-    rash_label = "Skin Rash" if role != UserRole.PATIENT else "Any skin rashes?"
-    skin_rash = st.checkbox(
-        rash_label,
-        value=get_default_value("skin_rash", False),
-        key="input_skin_rash"
-    )
+    skin_rash = st.checkbox("Any skin rashes?", value=get_val('skin_rash', None, False))
+    
+    st.markdown("---")
+    default_history = get_val('medical_history', 'medical_history', '')
+    medical_history = st.text_area("Anything else we should know?", 
+                                   value=default_history,
+                                   placeholder="Family history, medications, other conditions...")
     
     st.markdown("---")
     
-    # =========================================================================
-    # MEDICAL HISTORY
-    # =========================================================================
-    st.markdown("#### 📋 Additional Information")
-    
-    history_placeholder = (
-        "Family history, medications, previous diagnoses..." if role != UserRole.PATIENT
-        else "Tell us about any family history of joint problems, medicines you take, or other health conditions..."
-    )
-    
-    medical_history = st.text_area(
-        "Medical History" if role != UserRole.PATIENT else "Anything else we should know?",
-        value=get_default_value("medical_history", ""),
-        height=100,
-        placeholder=history_placeholder,
-        key="input_medical_history"
-    )
-    
-    st.markdown("---")
-    
-    # =========================================================================
-    # SUBMIT BUTTON
-    # =========================================================================
-    button_label = {
-        UserRole.CLINICIAN: "🔬 Run Clinical Assessment",
-        UserRole.PATIENT: "🔍 Check My Symptoms",
-        UserRole.AUDITOR: "📊 Generate Assessment"
-    }
-    
-    submitted = st.button(
-        button_label.get(role, "🔍 Run Assessment"),
-        use_container_width=True,
-        type="primary",
-        key="submit_assessment"
-    )
-    
-    if submitted:
-        # Clear sample data
+    if st.button("🔍 Check My Symptoms", type="primary", use_container_width=True):
+        # Clear sample data after submission
         st.session_state.sample_data = None
         
-        # Build symptoms list
+        # Build symptoms
         symptoms = [
             Symptom(name="joint_pain", present=joint_pain, 
                    severity=joint_pain_severity if joint_pain else None),
@@ -809,483 +541,49 @@ def create_screening_form() -> PatientScreening | None:
             Symptom(name="skin_rash", present=skin_rash),
         ]
         
-        return PatientScreening(
-            age=age,
-            sex=sex,
-            symptoms=symptoms,
-            medical_history=medical_history if medical_history else None
-        )
-    
-    return None
-
-
-# =============================================================================
-# COMPONENT: RESULTS DISPLAY
-# =============================================================================
-
-def display_results(
-    patient: PatientScreening,
-    assessment: RMDAssessment,
-    xai_explanation: XAIExplanation
-):
-    """Display the assessment results with XAI explanations."""
-    
-    role = st.session_state.user_role
-    
-    st.markdown("---")
-    
-    # ==========================================================================
-    # HEADER WITH RISK LEVEL
-    # ==========================================================================
-    
-    risk_class = f"risk-{assessment.risk_level.lower()}"
-    risk_icons = {"HIGH": "🔴", "MODERATE": "🟡", "LOW": "🟢"}
-    
-    st.markdown(f"""
-    <div style="text-align: center; padding: 24px;">
-        <span class="risk-badge {risk_class}">
-            {risk_icons[assessment.risk_level]} {assessment.risk_level} RISK
-        </span>
-        <p style="margin-top: 16px; color: #666; font-size: 14px;">
-            Confidence: {assessment.confidence_score:.0%}
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # ==========================================================================
-    # KEY METRICS
-    # ==========================================================================
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Risk Level", assessment.risk_level)
-    with col2:
-        st.metric("Confidence", f"{assessment.confidence_score:.0%}")
-    with col3:
-        st.metric("Conditions", len(assessment.likely_conditions))
-    with col4:
-        st.metric("Red Flags", len(assessment.red_flags_identified))
-    
-    st.markdown("---")
-    
-    # ==========================================================================
-    # ROLE-SPECIFIC EXPLANATION
-    # ==========================================================================
-    
-    st.markdown("## 🔍 AI Explanation")
-    
-    # Create tabs for different views
-    if role == UserRole.CLINICIAN:
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📋 Clinical Summary", 
-            "📊 Feature Contributions", 
-            "🧠 Agent Reasoning",
-            "🏥 FHIR Resources"
-        ])
-    elif role == UserRole.PATIENT:
-        tab1, tab2, tab3 = st.tabs([
-            "📋 Your Results", 
-            "❓ What This Means",
-            "📞 Next Steps"
-        ])
-    else:  # Auditor
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📋 Audit Log", 
-            "📊 Decision Factors", 
-            "🔄 Processing Trace",
-            "📥 Export Data"
-        ])
-    
-    # ==========================================================================
-    # CLINICIAN VIEW
-    # ==========================================================================
-    
-    if role == UserRole.CLINICIAN:
-        with tab1:
-            st.markdown(xai_explanation.clinician_summary)
-        
-        with tab2:
-            st.markdown("### Feature Contributions to Risk Assessment")
-            st.markdown("*How each factor influenced the AI's decision (LIME/SHAP-style)*")
-            
-            for contrib in xai_explanation.feature_contributions:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    direction_icon = "↑" if contrib.contribution_direction == "increases_risk" else "↓"
-                    color = "#ff4b2b" if contrib.contribution_direction == "increases_risk" else "#38ef7d"
-                    
-                    st.markdown(f"""
-                    **{contrib.feature_name}** ({contrib.feature_value})
-                    
-                    {contrib.clinical_significance}
-                    """)
-                    
-                    # Visual bar
-                    bar_width = abs(contrib.contribution_score) * 200
-                    st.markdown(f"""
-                    <div style="background: #eee; border-radius: 4px; height: 20px; width: 200px;">
-                        <div style="background: {color}; height: 20px; width: {bar_width}px; 
-                                    border-radius: 4px;"></div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                with col2:
-                    st.metric("Contribution", f"{contrib.contribution_score:+.2f}")
-                
-                st.markdown("---")
-            
-            # Counterfactuals
-            st.markdown("### 🔄 Counterfactual Explanations")
-            st.markdown("*What would change the outcome?*")
-            for cf in xai_explanation.counterfactuals:
-                st.info(cf)
-        
-        with tab3:
-            st.markdown("### Agent Reasoning Trace")
-            st.markdown("*The AI agent's step-by-step clinical reasoning (ReAct pattern)*")
-            
-            for step in xai_explanation.reasoning_steps:
-                with st.expander(f"Step {step.step_number}: {step.tool_used or 'Analysis'}", expanded=True):
-                    st.markdown(f"**Thought:** {step.thought}")
-                    if step.action:
-                        st.markdown(f"**Action:** {step.action}")
-                    if step.tool_used:
-                        st.code(f"Tool: {step.tool_used}", language=None)
-                    if step.observation:
-                        st.markdown(f"**Observation:** {step.observation}")
-                    st.caption(f"⏱️ {step.duration_ms}ms | {step.timestamp.strftime('%H:%M:%S.%f')[:-3]}")
-        
-        with tab4:
-            display_fhir_bundle(patient, assessment)
-    
-    # ==========================================================================
-    # PATIENT VIEW
-    # ==========================================================================
-    
-    elif role == UserRole.PATIENT:
-        with tab1:
-            st.markdown(xai_explanation.patient_summary)
-        
-        with tab2:
-            st.markdown("### What We Looked At")
-            st.markdown("Here's what the check considered when looking at your symptoms:")
-            
-            for i, contrib in enumerate(xai_explanation.feature_contributions[:5], 1):
-                icon = "✓" if contrib.contribution_direction == "increases_risk" else "○"
-                st.markdown(f"""
-                <div class="info-box">
-                    <strong>{i}. {contrib.feature_name}</strong><br>
-                    {contrib.plain_language}
-                </div>
-                """, unsafe_allow_html=True)
-        
-        with tab3:
-            st.markdown("### What Happens Next?")
-            
-            if assessment.risk_level == "HIGH":
-                st.error(f"**Recommended:** {assessment.recommended_next_step}")
-                st.markdown("""
-                Your GP will likely refer you to a **rheumatologist** - a doctor who specializes 
-                in joint and muscle conditions. They'll do more detailed tests to understand 
-                exactly what's happening.
-                
-                **Don't worry** - getting seen by a specialist is a good thing! It means you'll 
-                get the right care from experts.
-                """)
-            elif assessment.risk_level == "MODERATE":
-                st.warning(f"**Recommended:** {assessment.recommended_next_step}")
-                st.markdown("""
-                Your GP can help investigate your symptoms further. They might:
-                - Order some blood tests
-                - Examine your joints
-                - Discuss your symptoms in more detail
-                
-                It's always better to check these things early.
-                """)
-            else:
-                st.success(f"**Recommended:** {assessment.recommended_next_step}")
-                st.markdown("""
-                Your symptoms don't suggest anything requiring urgent attention right now.
-                
-                However, please do speak to your GP if:
-                - Your symptoms get worse
-                - You develop new symptoms
-                - The symptoms don't improve over time
-                
-                Looking after your joint health is important!
-                """)
-            
-            st.markdown("---")
-            st.markdown("### 📞 Helpful Resources")
-            st.markdown("""
-            - **NHS 111**: Call 111 for non-emergency medical advice
-            - **Your GP**: Book an appointment through your usual GP surgery
-            - **Versus Arthritis**: [versusarthritis.org](https://www.versusarthritis.org) - Information and support
-            - **NRAS**: [nras.org.uk](https://www.nras.org.uk) - National Rheumatoid Arthritis Society
-            """)
-    
-    # ==========================================================================
-    # AUDITOR VIEW
-    # ==========================================================================
-    
-    else:
-        with tab1:
-            st.markdown(xai_explanation.auditor_summary)
-        
-        with tab2:
-            st.markdown("### Decision Factor Analysis")
-            
-            # Create a table of all factors
-            factor_data = []
-            for contrib in xai_explanation.feature_contributions:
-                factor_data.append({
-                    "Factor": contrib.feature_name,
-                    "Value": contrib.feature_value,
-                    "Contribution": f"{contrib.contribution_score:+.2f}",
-                    "Direction": contrib.contribution_direction,
-                    "Clinical Basis": contrib.clinical_significance
-                })
-            
-            st.dataframe(factor_data, use_container_width=True)
-            
-            st.markdown("### Risk Score Composition")
-            total_positive = sum(c.contribution_score for c in xai_explanation.feature_contributions 
-                               if c.contribution_score > 0)
-            total_negative = sum(c.contribution_score for c in xai_explanation.feature_contributions 
-                               if c.contribution_score < 0)
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Risk Factors", f"+{total_positive:.2f}")
-            with col2:
-                st.metric("Protective Factors", f"{total_negative:.2f}")
-            with col3:
-                st.metric("Net Score", f"{total_positive + total_negative:.2f}")
-        
-        with tab3:
-            st.markdown("### Processing Trace")
-            
-            for entry in xai_explanation.audit_trail:
-                st.markdown(f"""
-                `{entry.timestamp.strftime('%H:%M:%S.%f')[:-3]}` | **{entry.event_type}** | 
-                ID: `{entry.entry_id}` | Status: {entry.details.get('status', 'N/A')}
-                """)
-            
-            st.markdown("---")
-            
-            st.markdown("### Reasoning Steps Detail")
-            for step in xai_explanation.reasoning_steps:
-                st.markdown(f"""
-                **Step {step.step_number}** | `{step.timestamp.strftime('%H:%M:%S.%f')[:-3]}` | 
-                Duration: {step.duration_ms}ms
-                
-                - Thought: {step.thought}
-                - Tool: `{step.tool_used}`
-                - Observation: {step.observation}
-                """)
-                st.markdown("---")
-        
-        with tab4:
-            st.markdown("### Export Assessment Data")
-            
-            # Prepare export data
-            export_data = {
-                "assessment_id": xai_explanation.assessment_id,
-                "generated_at": xai_explanation.generated_at.isoformat(),
-                "risk_level": assessment.risk_level,
-                "confidence_score": assessment.confidence_score,
-                "likely_conditions": assessment.likely_conditions,
-                "red_flags": assessment.red_flags_identified,
-                "feature_contributions": [
-                    {
-                        "feature": c.feature_name,
-                        "value": c.feature_value,
-                        "contribution": c.contribution_score,
-                        "direction": c.contribution_direction
-                    }
-                    for c in xai_explanation.feature_contributions
-                ],
-                "reasoning": assessment.reasoning,
-                "audit_trail": [
-                    {
-                        "entry_id": e.entry_id,
-                        "timestamp": e.timestamp.isoformat(),
-                        "event_type": e.event_type
-                    }
-                    for e in xai_explanation.audit_trail
-                ]
-            }
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    "📥 Download Audit Log (JSON)",
-                    data=json.dumps(export_data, indent=2),
-                    file_name=f"rmd_audit_{xai_explanation.assessment_id}.json",
-                    mime="application/json",
-                    use_container_width=True
-                )
-            
-            with col2:
-                st.download_button(
-                    "📥 Download Audit Report (MD)",
-                    data=xai_explanation.auditor_summary,
-                    file_name=f"rmd_audit_report_{xai_explanation.assessment_id}.md",
-                    mime="text/markdown",
-                    use_container_width=True
-                )
-            
-            # Display FHIR bundle for auditors too
-            st.markdown("---")
-            st.markdown("### FHIR R4 Bundle")
-            display_fhir_bundle(patient, assessment)
-
-
-# =============================================================================
-# COMPONENT: FHIR BUNDLE DISPLAY
-# =============================================================================
-
-def display_fhir_bundle(patient: PatientScreening, assessment: RMDAssessment):
-    """Display FHIR R4 bundle information."""
-    
-    # Create FHIR bundle
-    symptoms_data = [
-        {"name": s.name, "present": s.present, "severity": s.severity, 
-         "duration_days": s.duration_days, "duration_minutes": s.duration_minutes}
-        for s in patient.symptoms
-    ]
-    assessment_data = {
-        "risk_level": assessment.risk_level,
-        "likely_conditions": assessment.likely_conditions,
-        "reasoning": assessment.reasoning,
-        "recommended_next_step": assessment.recommended_next_step,
-        "confidence_score": assessment.confidence_score,
-        "red_flags_identified": assessment.red_flags_identified,
-    }
-    
-    fhir_bundle = create_screening_bundle(
-        patient_id=patient.patient_id,
-        age=patient.age,
-        sex=patient.sex,
-        symptoms=symptoms_data,
-        assessment=assessment_data
-    )
-    
-    fhir_json = fhir_bundle.to_fhir_json()
-    
-    st.markdown("### 🏥 FHIR R4 Healthcare Data Bundle")
-    st.markdown("*Standards-compliant healthcare interoperability format*")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Bundle Type", fhir_json.get("type", "collection").title())
-    with col2:
-        st.metric("Resources", len(fhir_json.get("entry", [])))
-    with col3:
-        st.metric("Standard", "FHIR R4")
-    
-    for entry in fhir_json.get("entry", []):
-        resource = entry.get("resource", {})
-        resource_type = resource.get("resourceType", "Unknown")
-        resource_id = resource.get("id", "")[:8]
-        
-        icons = {"Patient": "👤", "Observation": "🔬", "RiskAssessment": "⚠️"}
-        
-        with st.expander(f"{icons.get(resource_type, '📄')} {resource_type} ({resource_id}...)"):
-            st.json(resource)
-    
-    st.download_button(
-        "📥 Download FHIR Bundle (JSON)",
-        data=json.dumps(fhir_json, indent=2, default=str),
-        file_name="rmd_fhir_bundle.json",
-        mime="application/fhir+json",
-        use_container_width=True
-    )
-
-
-# =============================================================================
-# MAIN APPLICATION
-# =============================================================================
-
-def main():
-    """Main application entry point."""
-    
-    init_session_state()
-    
-    # If no role selected, show role selection
-    if not st.session_state.user_role:
-        show_role_selection()
-        return
-    
-    # Create sidebar
-    create_sidebar()
-    
-    # Main header
-    role_titles = {
-        UserRole.CLINICIAN: "Clinical Assessment Interface",
-        UserRole.PATIENT: "Joint Health Checker",
-        UserRole.AUDITOR: "Assessment Audit System"
-    }
-    
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>🏥 RMD-Health</h1>
-        <p>{role_titles[st.session_state.user_role]}</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    show_disclaimer()
-    
-    # Check if we have a saved assessment (from role switch)
-    if st.session_state.assessment_complete and st.session_state.current_assessment:
-        st.info("📋 Viewing previous assessment result. Use sidebar to switch views or start a new assessment.")
-        display_results(
-            st.session_state.current_patient,
-            st.session_state.current_assessment,
-            st.session_state.xai_explanation
+        patient = PatientScreening(
+            age=age, sex=sex, symptoms=symptoms, medical_history=medical_history
         )
         
-        st.markdown("---")
-        st.markdown("### 📝 Run New Assessment")
-    
-    # Show screening form
-    patient = create_screening_form()
-    
-    # Process assessment if form submitted
-    if patient is not None:
-        with st.spinner("🔍 AI Agent analyzing symptoms..."):
-            # Run assessment
-            demo_mode = st.session_state.get('demo_mode', True)
+        # Update profile
+        update_patient_profile(user['id'], age, sex, medical_history)
+        
+        with st.spinner("🔍 AI Agent analyzing your symptoms..."):
+            # Run assessment - Use REAL Agentic AI with Groq API if configured
+            agent = RMDScreeningAgent()
             
-            if demo_mode:
-                assessment = demo_assessment(patient)
-            else:
-                agent = RMDScreeningAgent()
+            if agent.is_configured() and not st.session_state.get('demo_mode', False):
+                # USE REAL GROQ API - LLM decides which tools to call
                 assessment = agent.assess(patient)
+                api_used = "Groq LLM (Agentic AI)"
+            else:
+                # Fallback to demo mode if API not configured
+                assessment = demo_assessment(patient)
+                api_used = "Demo Mode (Rule-based)"
             
-            # Generate XAI explanation
+            # Generate IDs
+            assessment_id = f"RMD-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:4].upper()}"
+            
+            # Generate XAI
             patient_data = {
-                "age": patient.age,
-                "sex": patient.sex,
-                "symptoms": [
-                    {"name": s.name, "present": s.present, "severity": s.severity, 
-                     "duration_days": s.duration_days, "duration_minutes": s.duration_minutes}
-                    for s in patient.symptoms
-                ],
-                "medical_history": patient.medical_history
+                "age": age, "sex": sex,
+                "symptoms": [{"name": s.name, "present": s.present, "severity": s.severity,
+                             "duration_minutes": s.duration_minutes} for s in symptoms]
             }
             
-            # Extract tools used from reasoning
-            tools_used = []
+            # Extract tools used from agent reasoning
+            tools_used = ["analyze_inflammatory_markers", "analyze_joint_pattern", 
+                         "analyze_systemic_symptoms", "calculate_risk_score", 
+                         "get_differential_diagnosis"]
             if "[Agent used tools:" in assessment.reasoning:
+                # Extract actual tools from reasoning
                 import re
                 match = re.search(r'\[Agent used tools: ([^\]]+)\]', assessment.reasoning)
                 if match:
                     tools_used = [t.strip() for t in match.group(1).split(',')]
             
-            xai_explanation = generate_xai_explanation(
-                assessment_id=f"RMD-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{str(uuid.uuid4())[:4].upper()}",
+            xai = generate_xai_explanation(
+                assessment_id=assessment_id,
                 patient_data=patient_data,
                 risk_level=assessment.risk_level,
                 confidence=assessment.confidence_score,
@@ -1295,14 +593,531 @@ def main():
                 tools_used=tools_used
             )
             
-            # Store in session state
-            st.session_state.current_patient = patient
-            st.session_state.current_assessment = assessment
-            st.session_state.xai_explanation = xai_explanation
-            st.session_state.assessment_complete = True
+            # Create FHIR bundle
+            symptoms_data = [{"name": s.name, "present": s.present, "severity": s.severity,
+                             "duration_minutes": s.duration_minutes} for s in symptoms]
+            fhir_bundle_obj = create_screening_bundle(
+                patient.patient_id, patient.age, patient.sex, symptoms_data,
+                {"risk_level": assessment.risk_level, "confidence_score": assessment.confidence_score,
+                 "likely_conditions": assessment.likely_conditions}
+            )
+            fhir_bundle = fhir_bundle_obj.to_fhir_json()
+            
+            # Save to database
+            save_assessment(
+                patient_id=user['id'],
+                assessment_id=assessment_id,
+                symptoms=symptoms_data,
+                risk_level=assessment.risk_level,
+                confidence_score=assessment.confidence_score,
+                likely_conditions=assessment.likely_conditions,
+                red_flags=assessment.red_flags_identified,
+                recommended_action=assessment.recommended_next_step,
+                reasoning=assessment.reasoning,
+                xai_explanation=xai.__dict__,
+                fhir_bundle=fhir_bundle
+            )
         
-        # Display results
-        display_results(patient, assessment, xai_explanation)
+        # Show results
+        st.success(f"Assessment complete! (Powered by: {api_used})")
+        display_patient_results(assessment, xai, api_used)
+
+
+def display_patient_results(assessment: RMDAssessment, xai: XAIExplanation, api_used: str = ""):
+    """Display assessment results in patient-friendly format."""
+    
+    risk_colors = {"HIGH": "#ff4b2b", "MODERATE": "#ffd200", "LOW": "#38ef7d"}
+    risk_icons = {"HIGH": "🔴", "MODERATE": "🟡", "LOW": "🟢"}
+    
+    # Show AI mode indicator
+    if api_used:
+        if "Groq" in api_used:
+            st.info(f"🤖 **AI Analysis:** This assessment was generated using **Agentic AI** (LangChain ReAct + Groq LLM)")
+        else:
+            st.info(f"📊 **Analysis Mode:** {api_used}")
+    
+    st.markdown(f"""
+    <div style="text-align: center; padding: 20px; background: linear-gradient(135deg, 
+                {risk_colors[assessment.risk_level]}33, white); border-radius: 15px; margin: 20px 0;">
+        <h2>{risk_icons[assessment.risk_level]} {assessment.risk_level} RISK</h2>
+        <p>Confidence: {assessment.confidence_score:.0%}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("### 📋 What This Means")
+    st.markdown(xai.patient_summary)
+    
+    st.markdown("### 📞 Next Steps")
+    if assessment.risk_level == "HIGH":
+        st.error(f"**Recommended:** {assessment.recommended_next_step}")
+        st.markdown("""
+        Please speak to your GP soon. They may refer you to a rheumatologist.
+        
+        **NHS 111:** Call 111 for advice | **Your GP:** Book an appointment
+        """)
+    elif assessment.risk_level == "MODERATE":
+        st.warning(f"**Recommended:** {assessment.recommended_next_step}")
+    else:
+        st.success(f"**Recommended:** {assessment.recommended_next_step}")
+
+
+def show_patient_history(user):
+    """Show patient's assessment history."""
+    st.markdown("### 📋 My Assessment History")
+    
+    assessments = get_patient_assessments(user['id'])
+    
+    if not assessments:
+        st.info("No assessments yet.")
+        return
+    
+    for assessment in assessments:
+        with st.expander(f"Assessment #{assessment['assessment_number']} - {assessment['risk_level']} Risk - {assessment['created_at'][:10]}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Risk Level", assessment['risk_level'])
+                st.metric("Confidence", f"{assessment['confidence_score']:.0%}")
+            with col2:
+                st.write("**Conditions Identified:**")
+                for cond in assessment['likely_conditions']:
+                    st.write(f"- {cond}")
+            
+            st.write("**Recommendation:**", assessment['recommended_action'])
+            
+            if assessment.get('xai_explanation'):
+                st.markdown("---")
+                st.markdown("**Explanation:**")
+                xai = assessment['xai_explanation']
+                if 'patient_summary' in xai:
+                    st.markdown(xai['patient_summary'])
+
+
+def show_patient_settings(user):
+    """Patient settings page."""
+    st.markdown("### ⚙️ Settings")
+    
+    profile = get_patient_profile(user['id'])
+    
+    st.markdown("#### Update Profile")
+    age = st.number_input("Age", value=profile.get('age', 45) if profile else 45, min_value=18, max_value=100)
+    sex = st.selectbox("Sex", ["Male", "Female", "Other"],
+                      index=["Male", "Female", "Other"].index(profile.get('sex', 'Female') if profile else 'Female'))
+    history = st.text_area("Medical History", value=profile.get('medical_history', '') if profile else '')
+    
+    if st.button("Save Changes"):
+        update_patient_profile(user['id'], age, sex, history)
+        st.success("Profile updated!")
+
+
+# =============================================================================
+# CLINICIAN DASHBOARD
+# =============================================================================
+
+def show_clinician_dashboard():
+    """Dashboard for clinicians - view all patients."""
+    user = st.session_state.user
+    
+    st.markdown(f"""
+    <div class="main-header">
+        <h1>🏥 RMD-Health</h1>
+        <p>Welcome, {user['name']} <span class="user-badge badge-clinician">Clinician</span></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown(f"### 👨‍⚕️ {user['name']}")
+        st.markdown("---")
+        
+        if st.session_state.selected_patient:
+            if st.button("← Back to Patient List"):
+                st.session_state.selected_patient = None
+                st.rerun()
+        
+        st.markdown("---")
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.user = None
+            st.session_state.page = 'login'
+            st.rerun()
+    
+    # Main content
+    if st.session_state.selected_patient:
+        show_clinician_patient_view()
+    else:
+        show_clinician_patient_list()
+
+
+def show_clinician_patient_list():
+    """Show list of all patients."""
+    st.markdown("### 👥 Patient Directory")
+    
+    patients = get_all_patients()
+    
+    if not patients:
+        st.info("No patients registered yet.")
+        return
+    
+    # Summary metrics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Patients", len(patients))
+    with col2:
+        high_risk = sum(1 for p in patients if p.get('last_risk_level') == 'HIGH')
+        st.metric("High Risk Patients", high_risk)
+    with col3:
+        total_assessments = sum(p.get('assessment_count') or 0 for p in patients)
+        st.metric("Total Assessments", total_assessments)
+    
+    st.markdown("---")
+    
+    # Privacy notice for clinicians
+    st.info("🔒 **NHS GDPR Compliance**: Patient names are pseudonymized. Full identity available only through authorized audit request.")
+    
+    # Patient list
+    for patient in patients:
+        risk = patient.get('last_risk_level')
+        risk_display = risk if risk else 'N/A'
+        risk_class = f"risk-{risk.lower()}" if risk else ""
+        
+        # Pseudonymized display for clinician view
+        display_name = get_privacy_display_name(patient, 'clinician')
+        
+        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+        with col1:
+            st.markdown(f"**{display_name}**")
+            st.caption(f"Ref: {pseudonymize_id(patient['id'])}")
+        with col2:
+            # Age bands instead of exact age for additional privacy
+            age = patient.get('age')
+            age_band = "N/A"
+            if age:
+                if age < 30: age_band = "18-29"
+                elif age < 45: age_band = "30-44"
+                elif age < 60: age_band = "45-59"
+                elif age < 75: age_band = "60-74"
+                else: age_band = "75+"
+            sex = patient.get('sex') or 'N/A'
+            st.write(f"Age Band: {age_band} | Sex: {sex}")
+        with col3:
+            st.write(f"Assessments: {patient.get('assessment_count') or 0}")
+            if risk:
+                st.markdown(f"<span class='{risk_class}'>{risk_display}</span>", unsafe_allow_html=True)
+            else:
+                st.caption("No assessments yet")
+        with col4:
+            if st.button("View", key=f"view_{patient['id']}"):
+                st.session_state.selected_patient = patient['id']
+                st.rerun()
+        
+        st.markdown("---")
+
+
+def show_clinician_patient_view():
+    """Detailed view of a patient for clinician."""
+    patient_id = st.session_state.selected_patient
+    
+    # Get patient info
+    patients = get_all_patients()
+    patient = next((p for p in patients if p['id'] == patient_id), None)
+    
+    if not patient:
+        st.error("Patient not found")
+        return
+    
+    # Pseudonymized display for clinician view
+    display_name = get_privacy_display_name(patient, 'clinician')
+    
+    st.markdown(f"### 📋 Patient: {display_name}")
+    st.caption("🔒 NHS GDPR: Pseudonymized identifier shown. Access full identity via audit request.")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Patient Ref", pseudonymize_id(patient['id']))
+    with col2:
+        # Show exact age to clinician for clinical relevance
+        st.metric("Age", patient.get('age', 'N/A'))
+    with col3:
+        st.metric("Sex", patient.get('sex', 'N/A'))
+    with col4:
+        st.metric("Total Assessments", patient.get('assessment_count', 0))
+    
+    st.markdown("---")
+    
+    # Get assessments
+    assessments = get_patient_assessments(patient_id)
+    
+    if not assessments:
+        st.info("No assessments for this patient.")
+        return
+    
+    for assessment in assessments:
+        with st.expander(f"Assessment #{assessment['assessment_number']} - {assessment['risk_level']} - {assessment['created_at'][:10]}", expanded=True):
+            
+            # Clinical summary
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Risk Level", assessment['risk_level'])
+                st.metric("Confidence", f"{assessment['confidence_score']:.0%}")
+                
+                st.markdown("**Red Flags:**")
+                for flag in assessment['red_flags']:
+                    st.markdown(f"- 🚩 {flag}")
+            
+            with col2:
+                st.markdown("**Likely Conditions:**")
+                for cond in assessment['likely_conditions']:
+                    st.markdown(f"- {cond}")
+                
+                st.markdown(f"**Recommendation:** {assessment['recommended_action']}")
+            
+            # XAI Explanation (Clinician view)
+            if assessment.get('xai_explanation'):
+                st.markdown("---")
+                st.markdown("#### Clinical AI Explanation")
+                
+                xai = assessment['xai_explanation']
+                
+                if 'clinician_summary' in xai:
+                    st.markdown(xai['clinician_summary'])
+                
+                # Feature contributions
+                if 'feature_contributions' in xai:
+                    st.markdown("**Feature Contributions:**")
+                    for fc in xai['feature_contributions']:
+                        if isinstance(fc, dict):
+                            direction = "↑" if fc.get('contribution_direction') == 'increases_risk' else "↓"
+                            st.markdown(f"- {fc.get('feature_name')}: {fc.get('contribution_score', 0):+.2f} {direction}")
+            
+            # FHIR Bundle
+            if assessment.get('fhir_bundle'):
+                with st.expander("📦 FHIR R4 Bundle"):
+                    st.json(assessment['fhir_bundle'])
+
+
+# =============================================================================
+# AUDITOR DASHBOARD
+# =============================================================================
+
+def show_auditor_dashboard():
+    """Dashboard for auditors - view all audit logs."""
+    user = st.session_state.user
+    
+    st.markdown(f"""
+    <div class="main-header">
+        <h1>🏥 RMD-Health</h1>
+        <p>Welcome, {user['name']} <span class="user-badge badge-auditor">Auditor</span></p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Sidebar
+    with st.sidebar:
+        st.markdown(f"### 📋 {user['name']}")
+        st.markdown("*Regulatory Auditor*")
+        st.markdown("---")
+        
+        page = st.radio("Audit View", [
+            "📊 Overview",
+            "📋 All Audit Logs",
+            "👥 By Patient",
+            "📥 Export Data"
+        ])
+        
+        st.markdown("---")
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.user = None
+            st.session_state.page = 'login'
+            st.rerun()
+    
+    if "Overview" in page:
+        show_auditor_overview()
+    elif "All Audit" in page:
+        show_all_audit_logs()
+    elif "By Patient" in page:
+        show_auditor_by_patient()
+    elif "Export" in page:
+        show_export_page()
+
+
+def show_auditor_overview():
+    """Auditor overview dashboard."""
+    st.markdown("### 📊 Audit Overview")
+    
+    logs = get_all_audit_logs()
+    patients = get_all_patients()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Audit Entries", len(logs))
+    with col2:
+        st.metric("Total Patients", len(patients))
+    with col3:
+        total_assessments = sum(p.get('assessment_count', 0) for p in patients)
+        st.metric("Total Assessments", total_assessments)
+    with col4:
+        high_risk = sum(1 for p in patients if p.get('last_risk_level') == 'HIGH')
+        st.metric("High Risk Cases", high_risk)
+    
+    st.markdown("---")
+    st.markdown("### 📋 Recent Audit Activity")
+    st.caption("🔒 NHS GDPR: Patient identities pseudonymized. Full PII access requires authorized audit request.")
+    
+    for log in logs[:10]:
+        patient_ref = pseudonymize_id(log['patient_id'])
+        st.markdown(f"""
+        <div class="audit-entry">
+            <strong>{log['timestamp']}</strong> | {log['event_type']} | 
+            Patient Ref: {patient_ref} | Assessment: {log['assessment_id'][:20]}...
+            <br>Hash: <code>{log.get('entry_hash', 'N/A')}</code>
+        </div>
+        """, unsafe_allow_html=True)
+
+
+def show_all_audit_logs():
+    """Show all audit logs."""
+    st.markdown("### 📋 Complete Audit Trail")
+    st.caption("🔒 NHS GDPR Compliance: Patient identities are pseudonymized to protect PII.")
+    
+    logs = get_all_audit_logs()
+    
+    # Filter
+    event_types = list(set(log['event_type'] for log in logs))
+    selected_type = st.selectbox("Filter by Event Type", ["All"] + event_types)
+    
+    if selected_type != "All":
+        logs = [l for l in logs if l['event_type'] == selected_type]
+    
+    st.markdown(f"**Showing {len(logs)} entries**")
+    
+    for log in logs:
+        patient_ref = pseudonymize_id(log['patient_id'])
+        with st.expander(f"{log['timestamp']} - {log['event_type']} - {patient_ref}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Entry ID:** {log['id']}")
+                st.write(f"**Assessment ID:** {log['assessment_id']}")
+                st.write(f"**Patient Ref:** {patient_ref}")
+            with col2:
+                st.write(f"**Timestamp:** {log['timestamp']}")
+                st.write(f"**Event Type:** {log['event_type']}")
+                st.write(f"**Hash:** `{log.get('entry_hash', 'N/A')}`")
+            
+            if log.get('details'):
+                st.markdown("**Details:**")
+                st.json(log['details'])
+
+
+def show_auditor_by_patient():
+    """Show audit logs grouped by patient."""
+    st.markdown("### 👥 Audit by Patient")
+    st.caption("🔐 NHS GDPR: Select patient using pseudonymized reference.")
+    
+    patients = get_all_patients()
+    
+    # Show pseudonymized options instead of names
+    patient_options = [(p['id'], f"{pseudonymize_id(p['id'])}") for p in patients]
+    
+    selected_patient = st.selectbox(
+        "Select Patient Reference",
+        options=patient_options,
+        format_func=lambda x: x[1]
+    )
+    
+    if selected_patient:
+        patient_id = selected_patient[0]
+        patient_ref = pseudonymize_id(patient_id)
+        
+        # Get patient's audit logs
+        logs = get_patient_audit_logs(patient_id)
+        assessments = get_patient_assessments(patient_id)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Audit Entries", len(logs))
+        with col2:
+            st.metric("Assessments", len(assessments))
+        
+        st.markdown("---")
+        st.markdown(f"### 📋 Audit Trail for {patient_ref}")
+        
+        for log in logs:
+            st.markdown(f"""
+            <div class="audit-entry">
+                {log['timestamp']} | <strong>{log['event_type']}</strong> | 
+                Assessment: {log['assessment_id'][:20]}... | Hash: <code>{log.get('entry_hash', 'N/A')}</code>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        st.markdown("### 📊 Assessment Details")
+        
+        for assessment in assessments:
+            with st.expander(f"Assessment #{assessment['assessment_number']} - {assessment['risk_level']}"):
+                st.write(f"**Assessment ID:** {assessment['assessment_id']}")
+                st.write(f"**Created:** {assessment['created_at']}")
+                st.write(f"**Risk Level:** {assessment['risk_level']}")
+                st.write(f"**Confidence:** {assessment['confidence_score']:.0%}")
+                
+                st.markdown("**Symptoms:**")
+                st.json(assessment['symptoms'])
+                
+                if assessment.get('xai_explanation'):
+                    st.markdown("**XAI Explanation:**")
+                    st.markdown(assessment['xai_explanation'].get('auditor_summary', 'N/A'))
+                
+                if assessment.get('fhir_bundle'):
+                    st.markdown("**FHIR Bundle:**")
+                    st.json(assessment['fhir_bundle'])
+
+
+def show_export_page():
+    """Export data page."""
+    st.markdown("### 📥 Export Data")
+    
+    st.markdown("""
+    Export all data to CSV files for external analysis and compliance review.
+    
+    **Available Exports:**
+    - `users.csv` - User accounts (no passwords)
+    - `assessments.csv` - All assessment records
+    - `audit_logs.csv` - Complete audit trail
+    """)
+    
+    if st.button("📥 Generate CSV Export", type="primary"):
+        export_dir = export_to_csv()
+        st.success(f"Data exported to: `{export_dir}`")
+        
+        # Show download buttons
+        import os
+        for file in os.listdir(export_dir):
+            if file.endswith('.csv'):
+                with open(export_dir / file, 'r') as f:
+                    st.download_button(
+                        f"Download {file}",
+                        f.read(),
+                        file_name=file,
+                        mime="text/csv"
+                    )
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main():
+    """Main application entry point."""
+    init_session()
+    
+    if st.session_state.user is None:
+        show_login_page()
+    else:
+        user_type = st.session_state.user['user_type']
+        
+        if user_type == 'patient':
+            show_patient_dashboard()
+        elif user_type == 'clinician':
+            show_clinician_dashboard()
+        elif user_type == 'auditor':
+            show_auditor_dashboard()
 
 
 if __name__ == "__main__":
