@@ -102,9 +102,21 @@ class FHIRPatient(BaseModel):
     # Extension for age (since we use age directly in demo)
     extension: list[dict] = Field(default_factory=list)
     
+    # Meta for NHS UK Core FHIR profile compliance
+    meta: dict = Field(default_factory=lambda: {
+        "profile": ["https://fhir.hl7.org.uk/StructureDefinition/UKCore-Patient"]
+    })
+    
     @classmethod
     def from_screening_data(cls, patient_id: str, age: int, sex: str) -> "FHIRPatient":
-        """Create a FHIR Patient from screening data."""
+        """Create a FHIR Patient from screening data.
+        
+        NHS GDPR Compliance Notes:
+        - Patient ID is pseudonymized (not real NHS Number)
+        - Name is intentionally NOT included to minimize PII
+        - Only age and sex stored for clinical relevance
+        - Full PII available only through authorized audit trail
+        """
         gender_map = {
             "Male": "male",
             "Female": "female", 
@@ -112,21 +124,50 @@ class FHIRPatient(BaseModel):
             "Prefer not to say": "unknown"
         }
         
+        # Generate pseudonymized NHS-style identifier (10-digit format)
+        import hashlib
+        pseudo_id = hashlib.sha256(f"NHS-{patient_id}".encode()).hexdigest()[:10].upper()
+        
         return cls(
             id=patient_id,
             identifier=[
+                # Pseudonymized identifier (NOT real NHS Number)
                 FHIRIdentifier(
-                    system="urn:rmd-health:demo",
+                    system="https://fhir.nhs.uk/Id/nhs-number",  # NHS Number system
+                    value=f"DEMO-{pseudo_id}"  # Clearly marked as demo/pseudonymized
+                ),
+                # RMD-Health internal reference
+                FHIRIdentifier(
+                    system="urn:rmd-health:patient-ref",
                     value=patient_id
                 )
             ],
+            # GDPR: No name included - pseudonymized patient
+            name=[],
             gender=gender_map.get(sex, "unknown"),
             extension=[
                 {
                     "url": "http://hl7.org/fhir/StructureDefinition/patient-age",
                     "valueInteger": age
                 }
-            ]
+            ],
+            meta={
+                "profile": ["https://fhir.hl7.org.uk/StructureDefinition/UKCore-Patient"],
+                "security": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality",
+                        "code": "R",
+                        "display": "Restricted"
+                    }
+                ],
+                "tag": [
+                    {
+                        "system": "urn:rmd-health:data-classification",
+                        "code": "PSEUDONYMIZED",
+                        "display": "Pseudonymized Patient Data"
+                    }
+                ]
+            }
         )
     
     def to_fhir_json(self) -> dict:

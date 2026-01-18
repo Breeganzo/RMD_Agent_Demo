@@ -1,250 +1,197 @@
-# 🏥 RMD-Health Screening Agent
+# 🏥 RMD-Health: AI-Powered Rheumatoid Disease Screening Agent
 
 <div align="center">
 
-![RMD-Health Banner](https://img.shields.io/badge/RMD--Health-AI%20Screening%20Agent-667eea?style=for-the-badge&logo=heart&logoColor=white)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://rmd-health.streamlit.app)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![FHIR R4](https://img.shields.io/badge/FHIR-R4-orange.svg)](https://www.hl7.org/fhir/)
+[![NHS GDPR](https://img.shields.io/badge/NHS-GDPR%20Compliant-green.svg)](docs/NHS_GDPR_COMPLIANCE.md)
 
-**An AI-powered Clinical Decision Support prototype demonstrating Explainable AI (XAI) for early detection of Rheumatic and Musculoskeletal Diseases**
+**A Clinical Decision Support System (CDSS) prototype demonstrating Agentic AI, Explainable AI (XAI), and FHIR R4 compliance for early detection of Rheumatic and Musculoskeletal Diseases (RMDs).**
 
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.28+-FF4B4B?style=flat-square&logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![LangChain](https://img.shields.io/badge/LangChain-Agent-1C3C3C?style=flat-square&logo=chainlink&logoColor=white)](https://langchain.com/)
-[![FHIR R4](https://img.shields.io/badge/FHIR-R4-FF6B35?style=flat-square&logo=databricks&logoColor=white)](https://www.hl7.org/fhir/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](https://opensource.org/licenses/MIT)
-
-[Features](#-features) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [XAI Approach](#-explainable-ai-approach) • [Demo](#-running-the-demo)
+*Built for the University of Reading RMD-Health Project*
 
 </div>
 
 ---
 
-## ⚠️ IMPORTANT DISCLAIMER
+## ⚠️ Important Disclaimer
 
-> **🚨 DEMONSTRATION PROTOTYPE ONLY**
-> 
-> This application is a **proof-of-concept demonstration** built for educational and interview purposes.
-> It is **NOT intended for clinical use**, real patient data, or actual medical decision-making.
-> 
-> **Do NOT use this for real medical assessments.** Always consult qualified healthcare professionals.
+> **This is a DEMONSTRATION PROTOTYPE only.** It is NOT intended for clinical use, real patient data, or medical decision-making. All outputs are simulated and should NOT be considered medical advice. Always consult qualified healthcare professionals.
 
 ---
 
-## 🎯 Purpose
+## 🏗️ System Architecture
 
-This project was built as a demonstration for the **AI Software Engineer** role interview at the **University of Reading** for the **RMD-Health project** (NIHR206473).
-
-It showcases how modern AI technologies can be applied to healthcare while maintaining:
-- **Transparency** through Explainable AI
-- **Compliance** with healthcare data standards (FHIR R4)
-- **Trust** through role-appropriate explanations
-- **Auditability** for regulatory requirements
+```mermaid
+flowchart TB
+    subgraph Users["👥 Users"]
+        P[("🧑 Patient")]
+        C[("👨‍⚕️ Clinician")]
+        A[("📋 Auditor")]
+    end
+    
+    subgraph Frontend["🖥️ Streamlit Frontend"]
+        UI[Web Interface]
+        Auth[Authentication]
+        RBV[Role-Based Views]
+    end
+    
+    subgraph Agent["🤖 Agentic AI Core"]
+        LLM["Groq LLM\n(Llama 3.1)"]
+        ReAct["LangGraph\nReAct Agent"]
+        
+        subgraph Tools["🔧 Analysis Tools"]
+            T1[analyze_inflammatory_markers]
+            T2[analyze_joint_pattern]
+            T3[analyze_systemic_symptoms]
+            T4[calculate_risk_score]
+            T5[get_differential_diagnosis]
+        end
+    end
+    
+    subgraph XAI["🔍 Explainable AI"]
+        LIME["LIME/SHAP-style\nFeature Contributions"]
+        TRACE["ReAct\nReasoning Trace"]
+        ROLE["Role-Based\nExplanations"]
+    end
+    
+    subgraph Compliance["📋 Compliance Layer"]
+        FHIR["FHIR R4\nBundle Generator"]
+        GDPR["NHS GDPR\nPseudonymization"]
+        AUDIT["Audit Trail\nLogger"]
+    end
+    
+    subgraph Storage["💾 Data Layer"]
+        DB[(SQLite DB)]
+        EXPORT[CSV Export]
+    end
+    
+    P & C & A --> UI
+    UI --> Auth
+    Auth --> RBV
+    RBV --> ReAct
+    ReAct --> LLM
+    LLM --> Tools
+    Tools --> XAI
+    XAI --> FHIR
+    FHIR --> GDPR
+    GDPR --> AUDIT
+    AUDIT --> DB
+    DB --> EXPORT
+```
 
 ---
 
-## ✨ Features
+## 🔄 Agentic AI Workflow
 
-### 🤖 Agentic AI Architecture
-- **LangChain ReAct Agent** - The AI autonomously decides which analysis tools to use
-- **Tool-based Architecture** - Modular, extensible clinical analysis tools
-- **Free LLM Integration** - Uses Groq's free tier (Llama 3.1)
-- **Fallback Mode** - Works offline with rule-based analysis
+```mermaid
+sequenceDiagram
+    participant U as 👤 User
+    participant UI as 🖥️ Streamlit
+    participant A as 🤖 ReAct Agent
+    participant LLM as 🧠 Groq LLM
+    participant T as 🔧 Tools
+    participant X as 🔍 XAI
+    participant F as 📦 FHIR
+    
+    U->>UI: Submit Symptoms
+    UI->>A: Patient Data (JSON)
+    
+    rect rgb(230, 240, 255)
+        Note over A,T: ReAct Loop - LLM Decides Tools
+        A->>LLM: Analyze patient + available tools
+        LLM->>A: Thought: Need inflammatory analysis
+        A->>T: Call analyze_inflammatory_markers()
+        T->>A: Inflammatory findings
+        A->>LLM: Observation received, continue?
+        LLM->>A: Thought: Check joint pattern
+        A->>T: Call analyze_joint_pattern()
+        T->>A: Joint pattern analysis
+        LLM->>A: Thought: Calculate risk score
+        A->>T: Call calculate_risk_score()
+        T->>A: Risk score: HIGH
+        LLM->>A: Final Answer (JSON)
+    end
+    
+    A->>X: Generate XAI Explanation
+    X->>F: Create FHIR Bundle
+    F->>UI: Assessment + FHIR + XAI
+    UI->>U: Display Results
+```
+
+---
+
+## 🎯 Key Features
+
+### 🤖 Agentic AI (LangChain + LangGraph)
+- **ReAct Pattern**: LLM autonomously reasons about which tools to use
+- **5 Specialized Tools**: Inflammatory markers, joint patterns, systemic symptoms, risk scoring, differential diagnosis
+- **Groq Integration**: Free LLM inference with Llama 3.1
 
 ### 🔍 Explainable AI (XAI)
-- **Role-Based Explanations** - Different views for clinicians, patients, and auditors
-- **LIME/SHAP-style Contributions** - Visual feature importance with contribution scores
-- **Reasoning Traces** - Step-by-step agent decision-making (ReAct pattern)
-- **Counterfactual Explanations** - "What would change the outcome?"
-- **Audit Trails** - Complete decision logging for compliance
+- **LIME/SHAP-style** feature contribution scores
+- **Role-based explanations**: Technical for clinicians, plain language for patients
+- **ReAct reasoning traces** for complete transparency
 
-### 🏥 Healthcare Standards
-- **FHIR R4 Compliance** - Proper HL7 FHIR resources (Patient, Observation, RiskAssessment)
-- **SNOMED CT Ready** - Structured for clinical coding integration
-- **NHS-Aligned** - Follows UK healthcare terminology and guidelines
+### 🏥 FHIR R4 Compliance
+- **UK Core Profiles**: Patient, Observation, RiskAssessment
+- **SNOMED CT Coding**: Standard medical terminology
+- **Interoperable Bundles**: Ready for NHS integration
 
-### 👥 Multi-Stakeholder Design
-
-| User Role | Explanation Style | Key Features |
-|-----------|------------------|--------------|
-| **👨‍⚕️ Clinician** | Technical, evidence-based | Clinical terminology, guideline references, reasoning traces |
-| **🧑‍🤝‍🧑 Patient** | Simple, reassuring | Plain language, clear next steps, support resources |
-| **📋 Auditor** | Complete audit trail | Timestamps, hashes, decision factors, export capabilities |
+### 🔒 NHS GDPR Compliance
+- **Pseudonymization**: Patient IDs hashed for clinician/auditor views
+- **Caldicott Principles**: Minimum necessary information
+- **Audit Logging**: Hash-verified decision trail
 
 ---
 
-## 🏗️ Architecture
+## 👥 Multi-User System
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                         STREAMLIT WEB INTERFACE                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                         │
-│  │  Clinician  │  │   Patient   │  │   Auditor   │  ← Role Selection       │
-│  │    View     │  │    View     │  │    View     │                         │
-│  └─────────────┘  └─────────────┘  └─────────────┘                         │
-└────────────────────────────┬────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    XAI EXPLANATION ENGINE                                    │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐          │
-│  │ Feature          │  │ Reasoning        │  │ Counterfactual   │          │
-│  │ Contributions    │  │ Traces           │  │ Analysis         │          │
-│  └──────────────────┘  └──────────────────┘  └──────────────────┘          │
-└────────────────────────────┬────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    LANGCHAIN ReAct AGENT                                     │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  LLM (Groq - Llama 3.1)  →  AUTONOMOUSLY DECIDES which tools to use │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                             │                                               │
-│           ┌─────────────────┼─────────────────────────────┐                │
-│           ▼                 ▼                             ▼                │
-│  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐           │
-│  │ analyze_inflam-  │ │ analyze_joint_   │ │ calculate_risk_  │           │
-│  │ matory_markers   │ │ pattern          │ │ score            │           │
-│  └──────────────────┘ └──────────────────┘ └──────────────────┘           │
-│           ▼                 ▼                                              │
-│  ┌──────────────────┐ ┌──────────────────┐                                │
-│  │ analyze_systemic │ │ get_differential │                                │
-│  │ _symptoms        │ │ _diagnosis       │                                │
-│  └──────────────────┘ └──────────────────┘                                │
-└────────────────────────────┬────────────────────────────────────────────────┘
-                             │
-                             ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    FHIR R4 OUTPUT BUNDLE                                     │
-│  ┌──────────────┐  ┌─────────────────┐  ┌────────────────────┐             │
-│  │   Patient    │  │   Observation   │  │   RiskAssessment   │             │
-│  │   Resource   │  │   Resources     │  │   Resource         │             │
-│  └──────────────┘  └─────────────────┘  └────────────────────┘             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🔍 Explainable AI Approach
-
-This demo implements multiple XAI techniques aligned with healthcare regulatory requirements:
-
-### 1. Feature Contributions (LIME/SHAP-style)
-Shows how each symptom/factor contributes to the risk assessment:
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Feature Contribution Analysis                                    │
-├─────────────────────────────────────────────────────────────────┤
-│ Multiple Joints Affected  ████████████████████  +0.25           │
-│ Morning Stiffness        ████████████████      +0.20           │
-│ Joint Swelling           ██████████████        +0.18           │
-│ Age (52 years)           ████                  +0.10           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 2. ReAct Reasoning Traces
-Captures the agent's step-by-step clinical reasoning:
-
-```
-Step 1: THOUGHT
-"I need to analyze inflammatory markers because the patient has joint pain."
-
-Step 2: ACTION → analyze_inflammatory_markers
-OBSERVATION: "Joint swelling present - indicates active inflammation"
-
-Step 3: THOUGHT  
-"Inflammatory signs confirmed. Let me check the joint pattern..."
-```
-
-### 3. Role-Appropriate Explanations
-
-**For Clinicians:**
-> "Elevated inflammatory markers (joint swelling, prolonged morning stiffness >30min) 
-> combined with symmetric polyarticular involvement strongly suggests inflammatory 
-> arthritis, most likely RA. Recommend referral per NICE NG100 guidelines."
-
-**For Patients:**
-> "Your symptoms suggest we should have a specialist take a closer look. This doesn't 
-> mean anything is definitely wrong – it means we want to make sure you get the right 
-> care. Your GP will arrange a referral to a rheumatologist."
-
-### 4. Counterfactual Explanations
-```
-"The risk level would be MODERATE if morning stiffness lasted less than 30 minutes."
-"If joint swelling was not present, the assessment would likely be LOW risk."
-```
+| Role | Access Level | Features |
+|------|--------------|----------|
+| **🧑 Patient** | Own data only | View history, create assessments, plain-language explanations |
+| **👨‍⚕️ Clinician** | All patients (pseudonymized) | Clinical details, FHIR bundles, technical XAI |
+| **📋 Auditor** | Full audit access | Complete logs, CSV export, compliance review |
 
 ---
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-
-- Python 3.10 or higher
-- pip (Python package manager)
+- Python 3.10+
+- Groq API Key (free at [console.groq.com](https://console.groq.com))
 
 ### Installation
 
 ```bash
-# Clone or navigate to the project
+# Clone repository
+git clone https://github.com/YOUR_USERNAME/RMD_Agent_Demo.git
 cd RMD_Agent_Demo
 
-# Create virtual environment (recommended)
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # macOS/Linux
-# OR
-venv\Scripts\activate  # Windows
+source venv/bin/activate  # Windows: venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# (Optional) Set up API key for full AI mode
+# Configure environment
 cp .env.example .env
-# Edit .env and add your FREE Groq API key
+# Edit .env and add your GROQ_API_KEY
+
+# Run the application
+streamlit run app_multiuser.py
 ```
 
-### Get Your FREE API Key (Optional)
+### Demo Credentials
 
-The app works in **Demo Mode** without any API key. For full AI-powered assessment:
-
-1. Go to [https://console.groq.com](https://console.groq.com)
-2. Sign up with Google or GitHub (completely FREE!)
-3. Create a new API key
-4. Add it to your `.env` file:
-   ```
-   GROQ_API_KEY=gsk_your_actual_api_key_here
-   ```
-
----
-
-## ▶️ Running the Demo
-
-```bash
-# Start the application
-streamlit run app.py
-```
-
-The application will open in your browser at `http://localhost:8501`
-
-### Demo Walkthrough
-
-1. **Select Your Role** - Choose Clinician, Patient, or Auditor
-2. **Enter Symptoms** - Use the form or load sample data (High/Low Risk)
-3. **Run Assessment** - Click the assessment button
-4. **Explore XAI** - Navigate through role-specific explanation tabs
-
-### Sample Scenarios
-
-**High Risk Example:**
-- 52-year-old female
-- Multiple joints affected with swelling
-- Morning stiffness lasting 75+ minutes
-- Family history of RA
-
-**Low Risk Example:**
-- 32-year-old male
-- Occasional knee pain after exercise
-- No inflammatory signs
-- Active lifestyle
+| Role | Email | Password |
+|------|-------|----------|
+| **Auditor** | auditor@rmd-health.demo | admin123 |
+| **Clinician** | clinician@rmd-health.demo | clinician123 |
+| **Patient** | patient1@rmd-health.demo | patient123 |
 
 ---
 
@@ -252,117 +199,117 @@ The application will open in your browser at `http://localhost:8501`
 
 ```
 RMD_Agent_Demo/
-├── app.py                      # Main Streamlit application
-├── requirements.txt            # Python dependencies
-├── .env.example               # Environment variable template
-├── README.md                  # This file
+├── app_multiuser.py          # 🚀 Main app with authentication
+├── app.py                    # Single-user demo (no login)
+├── requirements.txt          # Python dependencies
+├── .env.example              # Environment template
+├── .gitignore                # Git exclusions (GDPR compliant)
 │
 ├── src/
-│   ├── __init__.py            # Package initialization
-│   ├── data_models.py         # Pydantic data models (FHIR-inspired)
-│   ├── fhir_resources.py      # FHIR R4 resource generation
-│   ├── prompts.py             # LLM system & user prompts
-│   ├── rmd_agent.py           # LangChain ReAct agent implementation
-│   ├── utils.py               # Utility functions
-│   └── xai_explanations.py    # Explainable AI module ⭐ NEW
+│   ├── rmd_agent.py          # 🤖 Agentic AI (LangGraph ReAct)
+│   ├── xai_explanations.py   # 🔍 Explainable AI module
+│   ├── fhir_resources.py     # 🏥 FHIR R4 resource builder
+│   ├── data_models.py        # 📋 Pydantic validation models
+│   ├── database.py           # 💾 SQLite + authentication
+│   └── utils.py              # Helper functions
 │
-├── sample_data/
-│   └── example_patient.json   # Sample patient data
+├── docs/
+│   ├── NHS_GDPR_COMPLIANCE.md    # Compliance documentation
+│   ├── FHIR_MAPPING.md           # FHIR resource mappings
+│   ├── ARCHITECTURE.md           # Technical architecture
+│   └── ABOUT_RMD.md              # Clinical background
 │
-└── docs/
-    ├── ARCHITECTURE.md        # System architecture details
-    ├── FHIR_MAPPING.md        # FHIR resource mapping guide
-    └── ...
+├── sample_data/              # Example patient data (fictional)
+└── data/                     # SQLite database (auto-created)
 ```
 
 ---
 
-## 🔧 Technology Stack
+## 🛠️ Technology Stack
 
-| Technology | Purpose | Why Chosen |
-|------------|---------|------------|
-| **Python 3.10+** | Core language | Type hints, modern syntax |
-| **Streamlit** | Web interface | Rapid prototyping, healthcare-friendly |
-| **LangChain** | Agent framework | ReAct pattern, tool orchestration |
-| **LangGraph** | Agent execution | Stateful, observable agent runs |
-| **Groq** | LLM inference | FREE tier, fast inference |
-| **Pydantic** | Data validation | Type safety, FHIR alignment |
-| **FHIR R4** | Healthcare standard | NHS interoperability |
-
----
-
-## 📊 Key Concepts Demonstrated
-
-### For Interview Discussion
-
-1. **Agentic AI**
-   - ReAct pattern (Reasoning + Acting)
-   - Tool-based architecture
-   - LLM-driven decision making
-
-2. **Explainable AI (XAI)**
-   - LIME/SHAP concepts
-   - Reasoning traces
-   - Multi-stakeholder explanations
-
-3. **Healthcare AI Compliance**
-   - FHIR R4 data standards
-   - Audit trail requirements
-   - Regulatory considerations (MHRA, DTAC)
-
-4. **Software Engineering**
-   - Clean architecture
-   - Type safety with Pydantic
-   - Modular design
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| **Frontend** | Streamlit | Interactive web UI |
+| **Agentic AI** | LangChain + LangGraph | ReAct agent framework |
+| **LLM** | Groq (Llama 3.1) | Free inference API |
+| **Data Validation** | Pydantic | Type-safe models |
+| **Database** | SQLite | User/assessment storage |
+| **Healthcare Standard** | FHIR R4 | Interoperability |
+| **Medical Coding** | SNOMED CT | Clinical terminology |
 
 ---
 
-## 🔒 Regulatory Considerations
+## 📊 Sample Output
 
-This demo demonstrates awareness of healthcare AI requirements:
+### Risk Assessment
+```json
+{
+  "risk_level": "HIGH",
+  "confidence_score": 0.85,
+  "likely_conditions": ["Rheumatoid Arthritis", "Inflammatory Arthritis"],
+  "red_flags_identified": ["Prolonged morning stiffness", "Joint swelling"],
+  "recommended_next_step": "Urgent rheumatology referral recommended"
+}
+```
 
-| Requirement | Implementation |
-|-------------|----------------|
-| **Transparency** | Full reasoning traces, feature contributions |
-| **Auditability** | Timestamped logs, input/output hashing |
-| **Explainability** | Role-appropriate explanations |
-| **Data Standards** | FHIR R4 compliance |
-| **User Understanding** | Tested explanation formats |
+### FHIR Bundle (Preview)
+```json
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {"resource": {"resourceType": "Patient", "id": "PT-A1B2C3D4"}},
+    {"resource": {"resourceType": "Observation", "code": {"coding": [{"system": "http://snomed.info/sct", "code": "57676002", "display": "Joint pain"}]}}},
+    {"resource": {"resourceType": "RiskAssessment", "prediction": [{"qualitativeRisk": {"text": "HIGH"}}]}}
+  ]
+}
+```
 
-**Note:** A production system would require full MHRA/MDR certification, clinical validation, and extensive testing.
+---
+
+## 🌐 Deployment
+
+### Streamlit Community Cloud (Recommended)
+1. Push to GitHub
+2. Go to [share.streamlit.io](https://share.streamlit.io)
+3. Connect repository, select `app_multiuser.py`
+4. Add secret: `GROQ_API_KEY`
+
+### Hugging Face Spaces
+1. Create new Space (Streamlit SDK)
+2. Upload files
+3. Set environment variable: `GROQ_API_KEY`
 
 ---
 
 ## 📚 Documentation
 
-- [Architecture Overview](docs/ARCHITECTURE.md)
-- [FHIR Mapping Guide](docs/FHIR_MAPPING.md)
-- [Interview Q&A](docs/INTERVIEW_QA.md)
-- [Speaking Guide](docs/SPEAKING_GUIDE.md)
-
----
-
-## 🙏 Acknowledgments
-
-Built for the University of Reading RMD-Health Project interview demonstration.
-
-- **RMD-Health Project** - NIHR206473
-- **LangChain** - Agent framework
-- **Groq** - Free LLM API
-- **Streamlit** - UI framework
+- [NHS GDPR Compliance](docs/NHS_GDPR_COMPLIANCE.md)
+- [FHIR Resource Mapping](docs/FHIR_MAPPING.md)
+- [Technical Architecture](docs/ARCHITECTURE.md)
+- [Demo Speaking Guide](DEMO_GUIDE.md)
 
 ---
 
 ## 📄 License
 
-MIT License - See [LICENSE](LICENSE) for details.
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
+
+## 🙏 Acknowledgments
+
+- University of Reading RMD-Health Research Team
+- NHS Digital for FHIR UK Core specifications
+- Groq for free LLM API access
+- LangChain team for the agent framework
 
 ---
 
 <div align="center">
 
-**Built with ❤️ for Healthcare AI**
+**Built with ❤️ for Healthcare AI Research**
 
-*This is a demonstration prototype. Not for clinical use.*
+*University of Reading • RMD-Health Project • 2026*
 
 </div>

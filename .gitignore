@@ -1,5 +1,19 @@
 # Environment variables - NEVER commit
 .env
+.streamlit/secrets.toml
+
+# Database files (will be recreated - GDPR compliance)
+data/*.db
+data/*.sqlite
+data/exports/
+*.db
+
+# Virtual environments (use your own)
+rmd-env/
+venv/
+ENV/
+env/
+.venv/
 
 # Python
 __pycache__/
@@ -45,3 +59,22 @@ Thumbs.db
 
 # Logs
 *.log
+
+# NHS GDPR Compliance - Ensure no sensitive data is committed
+# ============================================================
+# Data exports (may contain PII)
+data/exports/
+exports/
+*.csv
+
+# Any backup files
+*.bak
+*.backup
+
+# Presentation files (not needed for deployment)
+*.pptx
+*.ppt
+
+# Jupyter notebooks (may contain outputs with PII)
+*.ipynb
+.ipynb_checkpoints/
