@@ -3,7 +3,7 @@ RMD-Health Screening Agent - Utility Functions
 ===============================================
 
 This module provides utility functions for:
-- API communication with xAI (Grok)
+- API communication with Groq (LLM provider)
 - JSON parsing and validation
 - Pattern analysis tools for the agent
 - Error handling helpers
@@ -20,7 +20,7 @@ from src.data_models import PatientScreening, RMDAssessment, Symptom
 
 def load_api_key() -> str:
     """
-    Load the xAI API key from environment variables.
+    Load the Groq API key from environment variables.
     
     Returns:
         The API key string
@@ -28,23 +28,23 @@ def load_api_key() -> str:
     Raises:
         ValueError: If the API key is not set
     """
-    api_key = os.getenv("XAI_API_KEY")
-    if not api_key or api_key == "your_xai_api_key_here":
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key or api_key == "your_groq_api_key_here":
         raise ValueError(
-            "XAI_API_KEY environment variable is not set. "
+            "GROQ_API_KEY environment variable is not set. "
             "Please copy .env.example to .env and add your API key."
         )
     return api_key
 
 
 def get_model_name() -> str:
-    """Get the configured model name, defaulting to grok-beta."""
-    return os.getenv("XAI_MODEL", "grok-beta")
+    """Get the configured model name from GROQ_MODEL environment variable."""
+    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 
 def get_api_base_url() -> str:
-    """Get the API base URL, defaulting to xAI's endpoint."""
-    return os.getenv("XAI_BASE_URL", "https://api.x.ai/v1")
+    """Get the API base URL, defaulting to Groq's endpoint."""
+    return os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
 
 
 def extract_json_from_response(text: str) -> Optional[dict]:

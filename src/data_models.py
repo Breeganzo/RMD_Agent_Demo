@@ -57,6 +57,11 @@ class Symptom(BaseModel):
         ge=0,
         description="Duration of the symptom in days"
     )
+    duration_minutes: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Duration in minutes (used for morning stiffness)"
+    )
     notes: Optional[str] = Field(
         default=None,
         description="Additional notes about the symptom"

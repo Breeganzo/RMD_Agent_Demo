@@ -73,7 +73,7 @@ def analyze_inflammatory_markers(patient_data: str) -> str:
         name = symptom.get("name", "")
         present = symptom.get("present", False)
         severity = symptom.get("severity")
-        duration = symptom.get("duration_days")
+        duration_minutes = symptom.get("duration_minutes")  # For morning stiffness
         
         if not present:
             continue
@@ -87,8 +87,8 @@ def analyze_inflammatory_markers(patient_data: str) -> str:
             red_flags.append("Joint redness")
             
         if name == "morning_stiffness":
-            if duration and duration > 30:
-                findings.append(f"⚠️ Morning stiffness for {duration} minutes - >30min suggests inflammatory arthritis")
+            if duration_minutes and duration_minutes > 30:
+                findings.append(f"⚠️ Morning stiffness for {duration_minutes} minutes - >30min suggests inflammatory arthritis")
                 red_flags.append("Prolonged morning stiffness")
             elif severity and severity >= 5:
                 findings.append(f"⚠️ Morning stiffness severity {severity}/10 - moderate to severe")
@@ -248,7 +248,7 @@ def calculate_risk_score(patient_data: str) -> str:
         name = symptom.get("name", "")
         present = symptom.get("present", False)
         severity = symptom.get("severity")
-        duration = symptom.get("duration_days")
+        duration_minutes = symptom.get("duration_minutes")  # For morning stiffness
         
         if not present:
             continue
@@ -266,12 +266,12 @@ def calculate_risk_score(patient_data: str) -> str:
             factors.append("Polyarticular involvement: +3")
             
         if name == "morning_stiffness":
-            if duration and duration > 60:
+            if duration_minutes and duration_minutes > 60:
                 score += 4
-                factors.append(f"Prolonged morning stiffness ({duration} min): +4")
-            elif duration and duration > 30:
+                factors.append(f"Prolonged morning stiffness ({duration_minutes} min): +4")
+            elif duration_minutes and duration_minutes > 30:
                 score += 2
-                factors.append(f"Morning stiffness ({duration} min): +2")
+                factors.append(f"Morning stiffness ({duration_minutes} min): +2")
             else:
                 score += 1
                 factors.append("Morning stiffness: +1")
@@ -545,6 +545,7 @@ After using tools, provide your final answer as valid JSON:
                 "present": symptom.present,
                 "severity": symptom.severity,
                 "duration_days": symptom.duration_days,
+                "duration_minutes": symptom.duration_minutes,
             })
         
         return json.dumps({
@@ -795,7 +796,8 @@ def demo_assessment(patient: PatientScreening) -> RMDAssessment:
         "age": patient.age,
         "sex": patient.sex,
         "symptoms": [
-            {"name": s.name, "present": s.present, "severity": s.severity, "duration_days": s.duration_days}
+            {"name": s.name, "present": s.present, "severity": s.severity, 
+             "duration_days": s.duration_days, "duration_minutes": s.duration_minutes}
             for s in patient.symptoms
         ]
     })
