@@ -20,7 +20,11 @@ from src.data_models import PatientScreening, RMDAssessment, Symptom
 
 def load_api_key() -> str:
     """
-    Load the Groq API key from environment variables.
+    Load the Groq API key from environment variables or Streamlit secrets.
+    
+    Supports both:
+    - Local: .env file with GROQ_API_KEY
+    - Streamlit Cloud: secrets.toml with GROQ_API_KEY
     
     Returns:
         The API key string
@@ -28,11 +32,24 @@ def load_api_key() -> str:
     Raises:
         ValueError: If the API key is not set
     """
-    api_key = os.getenv("GROQ_API_KEY")
+    api_key = None
+    
+    # Try Streamlit secrets first (for Streamlit Cloud deployment)
+    try:
+        import streamlit as st
+        api_key = st.secrets.get("GROQ_API_KEY")
+    except Exception:
+        pass
+    
+    # Fall back to environment variable (for local development)
+    if not api_key:
+        api_key = os.getenv("GROQ_API_KEY")
+    
     if not api_key or api_key == "your_groq_api_key_here":
         raise ValueError(
-            "GROQ_API_KEY environment variable is not set. "
-            "Please copy .env.example to .env and add your API key."
+            "GROQ_API_KEY is not set. "
+            "For local: add to .env file. "
+            "For Streamlit Cloud: add to secrets in dashboard."
         )
     return api_key
 
